@@ -1,3 +1,4 @@
+
 export interface Choice {
   id: string;
   text: string;
@@ -16,4 +17,18 @@ export interface GameState {
   isLoading: boolean;
   loadingStage: string; // 'Writing Script' | 'Filming Scene' | 'Ready'
   history: string[]; // Keep track of narrative for context
+}
+
+// The Schema compatible with CLI Factory tools
+export interface TapeFileSchema {
+  meta: {
+    version: string;
+    characterName: string;
+    createdAt?: string;
+  };
+  engineState: {
+    history: string[];
+    currentBeat: StoryBeat | null;
+    loadingStage?: string;
+  };
 }

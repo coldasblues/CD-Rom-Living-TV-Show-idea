@@ -4,9 +4,9 @@ import CRTContainer from './components/CRTContainer';
 import TapeDeck, { TapeDeckHandle } from './components/TapeDeck';
 import ControlPanel from './components/ControlPanel';
 import NarrativeLog from './components/NarrativeLog';
-import { GameState, StoryBeat } from './types';
+import { GameState, StoryBeat, TapeFileSchema } from './types';
 import { generateStoryBeat, generateVideoClip } from './services/geminiService';
-import { writeTape, readTape } from './services/tapeService';
+import { createTapeBlob, readTapeData } from './utils/tapeUtils';
 
 const INITIAL_STATE: GameState = {
   videoUrl: null,
@@ -39,7 +39,7 @@ const App: React.FC = () => {
     if (gameState.isLoading) return;
 
     try {
-      // 1. Capture Frame (if this isn't the first run and we are playing a video)
+      // 1. Capture Frame (if this isn't the first run)
       let capturedFrame = gameState.lastFrameBase64;
       if (choiceText && tapeDeckRef.current) {
          const frame = tapeDeckRef.current.captureFrame();
@@ -105,19 +105,38 @@ const App: React.FC = () => {
   // --- Tape Management ---
 
   const handleEject = async () => {
-    if (!gameState.lastFrameBase64) {
+    // Capture the CURRENT thing on screen (either the end of the video or the loaded static image)
+    // We do not rely solely on gameState.lastFrameBase64 because that might be the *start* of the clip.
+    let currentFrameBase64 = tapeDeckRef.current?.captureFrame();
+    
+    if (!currentFrameBase64) {
+      // Fallback
+      currentFrameBase64 = gameState.lastFrameBase64;
+    }
+
+    if (!currentFrameBase64) {
       alert("No footage to save.");
       return;
     }
 
     try {
-      const imageBlob = base64ToBlob(gameState.lastFrameBase64);
-      const saveState = {
-        history: gameState.history,
-        currentBeat: gameState.currentBeat,
+      const imageBlob = base64ToBlob(currentFrameBase64);
+      
+      // Construct Protocol-compliant Schema
+      const saveState: TapeFileSchema = {
+        meta: {
+          version: "1.0",
+          characterName: "Viewer Agent", // Default name for browser saves
+          createdAt: new Date().toISOString()
+        },
+        engineState: {
+          history: gameState.history,
+          currentBeat: gameState.currentBeat,
+          loadingStage: "USER SAVE"
+        }
       };
       
-      const taggedBlob = await writeTape(imageBlob, saveState);
+      const taggedBlob = await createTapeBlob(imageBlob, saveState);
       const url = URL.createObjectURL(taggedBlob);
       const a = document.createElement('a');
       a.href = url;
@@ -149,8 +168,20 @@ const App: React.FC = () => {
       try {
         setGameState(prev => ({ ...prev, isLoading: true, loadingStage: 'READING TAPE...' }));
         
-        const { data, imgUrl } = await readTape(file);
+        // Read the raw data (could be any structure)
+        const { state: rawData, imgUrl } = await readTapeData(file);
         
+        // Normalize data based on Schema
+        let loadedState;
+        
+        if ('engineState' in rawData) {
+          // New Protocol
+          loadedState = (rawData as TapeFileSchema).engineState;
+        } else {
+          // Legacy / raw
+          loadedState = rawData;
+        }
+
         // Convert blob url back to base64 for storage
         const res = await fetch(imgUrl);
         const blob = await res.blob();
@@ -160,12 +191,12 @@ const App: React.FC = () => {
           const base64 = (reader.result as string).split(',')[1];
           
           setGameState({
-            videoUrl: null, // We only have the last frame, no video
-            currentBeat: data.currentBeat,
+            videoUrl: null, 
+            currentBeat: loadedState.currentBeat,
             lastFrameBase64: base64,
-            history: data.history || [],
+            history: loadedState.history || [],
             isLoading: false,
-            loadingStage: 'TAPE LOADED'
+            loadingStage: 'TAPE LOADED - READY'
           });
           setIsStarted(true);
         };

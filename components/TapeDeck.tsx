@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 
 interface TapeDeckProps {
@@ -14,36 +13,38 @@ export interface TapeDeckHandle {
 
 const TapeDeck = forwardRef<TapeDeckHandle, TapeDeckProps>(({ videoSrc, staticImageSrc, onEnded, isProcessing }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   // Expose the capture function to the parent
   useImperativeHandle(ref, () => ({
     captureFrame: () => {
-      if (!videoRef.current) return null;
-      
-      // If we are currently showing a static image and no video, we might want to return that static image?
-      // But generally, the loop captures from the video element.
-      // If the user loaded a tape, `staticImageSrc` is valid. We can return that if video is not playing.
-      
-      // However, to keep it robust:
       const canvas = document.createElement('canvas');
-      const video = videoRef.current;
       
-      // Ensure we capture at a reasonable resolution for the API
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
+      // Determine source dimensions
+      let width = 1280;
+      let height = 720;
+      
+      if (videoRef.current && videoSrc) {
+        width = videoRef.current.videoWidth || 1280;
+        height = videoRef.current.videoHeight || 720;
+      } else if (imgRef.current && staticImageSrc) {
+        width = imgRef.current.naturalWidth || 1280;
+        height = imgRef.current.naturalHeight || 720;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
       
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
       
-      // Draw video
-      if (videoSrc) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      } else if (staticImageSrc) {
-          // If video is not loaded, we can't easily draw the video element.
-          // The parent should likely manage the 'lastFrame' state directly if it's from a file.
-          // But if we need to recapture for some reason, this returns null currently.
-          // We'll rely on the parent passing the `lastFrameBase64` into the generator if video isn't active.
-          return null; 
+      // Draw source to canvas
+      if (videoSrc && videoRef.current) {
+          ctx.drawImage(videoRef.current, 0, 0, width, height);
+      } else if (staticImageSrc && imgRef.current) {
+          ctx.drawImage(imgRef.current, 0, 0, width, height);
+      } else {
+          return null;
       }
       
       // Return Base64 without the data URL prefix
@@ -75,6 +76,7 @@ const TapeDeck = forwardRef<TapeDeckHandle, TapeDeckProps>(({ videoSrc, staticIm
       ) : staticImageSrc ? (
          // Display loaded tape frame
          <img 
+            ref={imgRef}
             src={staticImageSrc} 
             className={`w-full h-full object-cover ${isProcessing ? 'opacity-50 grayscale' : 'opacity-100'} transition-all duration-1000`}
             alt="Tape Frame"
