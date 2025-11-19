@@ -14,6 +14,8 @@ const Lobby: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    console.log("[LifeCycle] Lobby Mounted");
+
     // Load API Key
     const storedKey = localStorage.getItem('GEMINI_API_KEY');
     if (storedKey) setApiKey(storedKey);
@@ -21,10 +23,15 @@ const Lobby: React.FC = () => {
     // Load Library from IDB
     const loadLib = async () => {
       try {
+        console.log("[Storage] Fetching library...");
         const tapes = await getLibrary();
-        setLibrary(tapes);
+        console.log("[Storage] Library loaded:", tapes);
+        // Safety check: ensure we always set an array
+        setLibrary(Array.isArray(tapes) ? tapes : []);
       } catch (e) {
-        console.error("Failed to load library", e);
+        console.error("[Storage] Failed to load library", e);
+        setError("Memory corrupted. Library unavailable.");
+        setLibrary([]); // Fallback to empty
       } finally {
         setIsLoading(false);
       }
@@ -52,6 +59,8 @@ const Lobby: React.FC = () => {
     e.preventDefault();
     setIsDragging(false);
     setError(null);
+
+    console.log("[Lobby] File dropped");
 
     const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'image/png');
     
@@ -96,13 +105,14 @@ const Lobby: React.FC = () => {
         };
 
       } catch (err) {
-        console.error("Failed to read tape", file.name, err);
+        console.error("[Lobby] Failed to read tape", file.name, err);
         setError("Corrupt or invalid tape data.");
       }
     }
   };
 
   const playTape = (tape: StoredTape) => {
+    console.log("[Lobby] Playing tape:", tape.id);
     navigate('/tv', { state: { tapeData: tape.data, tapeImgBase64: tape.imgBase64 } });
   };
 
@@ -115,6 +125,7 @@ const Lobby: React.FC = () => {
   };
 
   const playNew = () => {
+    console.log("[Lobby] Starting new tape");
     navigate('/tv');
   };
 
