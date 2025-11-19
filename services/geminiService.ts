@@ -1,19 +1,46 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { StoryBeat } from "../types";
 import { SYSTEM_INSTRUCTION, VISUAL_STYLE_PROMPT } from "../constants";
 
-// Helper to ensure we have a key before making requests
-async function getAuthenticatedClient(): Promise<GoogleGenAI> {
+// Helper to retrieve the API key string
+async function getApiKey(): Promise<string> {
+  // 1. Check Local Storage (User Input in Lobby)
+  const localKey = localStorage.getItem("GEMINI_API_KEY");
+  if (localKey) {
+    return localKey;
+  }
+
+  // 2. Check Standard Environment Variable
+  if (process.env.API_KEY) {
+    return process.env.API_KEY;
+  }
+
+  // 3. Check Vite Environment Variable
+  // @ts-ignore
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
+    // @ts-ignore
+    return import.meta.env.VITE_GEMINI_API_KEY;
+  }
+
+  // 4. Check AI Studio Context (Project IDX / Cloud)
   const win = window as any;
   if (win.aistudio && win.aistudio.hasSelectedApiKey) {
     const hasKey = await win.aistudio.hasSelectedApiKey();
     if (!hasKey) {
       await win.aistudio.openSelectKey();
     }
+    // Note: The key is injected into process.env.API_KEY by the environment after selection.
+    return process.env.API_KEY || '';
   }
-  // API Key is injected via process.env.API_KEY automatically in this environment
-  // after selection, but we instantiate strictly after the check.
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+  throw new Error("No API Key found. Please enter one in the Lobby.");
+}
+
+// Helper to ensure we have a key before making requests
+async function getAuthenticatedClient(): Promise<GoogleGenAI> {
+  const apiKey = await getApiKey();
+  return new GoogleGenAI({ apiKey });
 }
 
 /**
@@ -133,8 +160,11 @@ export const generateVideoClip = async (
   }
 
   // Fetch the actual video bytes to create a blob URL for the <video> tag
-  // Note: We must append the API key to the download link as per instructions
-  const videoRes = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
+  // Note: We must append the API key to the download link as per instructions.
+  // We need to retrieve the specific key we used for the client.
+  const apiKey = await getApiKey();
+
+  const videoRes = await fetch(`${videoUri}&key=${apiKey}`);
   const videoBlob = await videoRes.blob();
   return URL.createObjectURL(videoBlob);
 };

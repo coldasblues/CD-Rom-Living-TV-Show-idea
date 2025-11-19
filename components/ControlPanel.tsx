@@ -6,10 +6,11 @@ interface Props {
   choices: Choice[];
   onChoose: (choiceId: string) => void;
   onEject: () => void;
+  onHome: () => void;
   disabled: boolean;
 }
 
-const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, disabled }) => {
+const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, onHome, disabled }) => {
   return (
     <div className="w-full bg-[#0f0f0f] flex flex-col">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-6 pb-2 w-full">
@@ -48,7 +49,15 @@ const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, disabled })
       </div>
 
       {/* Utility Bar */}
-      <div className="px-6 py-4 flex justify-end border-t border-gray-900">
+      <div className="px-6 py-4 flex justify-between border-t border-gray-900">
+         <button
+             onClick={onHome}
+             className="text-gray-600 text-xs hover:text-green-500 uppercase tracking-[0.2em] flex items-center gap-2 disabled:opacity-50"
+             disabled={disabled && choices.length === 0} 
+         >
+            &lt; RETURN TO LOBBY
+         </button>
+
          <button
             onClick={onEject}
             disabled={disabled}
