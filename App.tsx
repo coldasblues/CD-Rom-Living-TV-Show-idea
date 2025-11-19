@@ -5,8 +5,10 @@ import TVRoom from './pages/TVRoom';
 
 const App: React.FC = () => {
   useEffect(() => {
-    console.log("[LifeCycle] App Mounted");
+    console.log("[LifeCycle] App Component Mounted");
   }, []);
+
+  console.log("[LifeCycle] App Rendering...");
 
   return (
     <Routes>

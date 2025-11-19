@@ -1,49 +1,172 @@
+
 import React, { useState, useEffect, DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { GoogleGenAI } from '@google/genai';
 import CRTContainer from '../components/CRTContainer';
 import { readTapeData } from '../utils/tapeUtils';
-import { TapeFileSchema } from '../types';
-import { getLibrary, saveTapeToLibrary, deleteTapeFromLibrary, StoredTape } from '../services/storageService';
+import { TapeFileSchema, StoredTape, AppSettings } from '../types';
+import { getLibrary, saveTapeToLibrary, deleteTapeFromLibrary, getSettings, saveSettings, DEFAULT_SETTINGS } from '../services/storageService';
+import { ANIMATION_STYLES, VIDEO_MODELS } from '../constants';
+
+// --- Helpers ---
+
+const blobToBase64 = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result.split(',')[1]);
+      } else {
+        reject(new Error("Failed to convert blob to base64"));
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
+const generatePlaceholderImage = (text: string): string => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 480;
+  canvas.height = 640; // 3:4 Aspect
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, 480, 640);
+
+    for (let i = 0; i < 5000; i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? '#1a1a1a' : '#0a0a0a';
+      ctx.fillRect(Math.random() * 480, Math.random() * 640, 3, 3);
+    }
+
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.05)';
+    for (let y = 0; y < 640; y += 4) {
+      ctx.fillRect(0, y, 480, 1);
+    }
+
+    ctx.save();
+    ctx.translate(240, 320);
+    ctx.rotate(-0.1);
+    ctx.textAlign = 'center';
+    
+    ctx.shadowColor = '#00ff00';
+    ctx.shadowBlur = 10;
+    
+    ctx.font = 'bold 40px monospace';
+    ctx.fillStyle = '#33ff33';
+    ctx.fillText(text.substring(0, 12).toUpperCase(), 0, -20);
+    
+    ctx.font = '20px monospace';
+    ctx.fillStyle = '#008800';
+    ctx.fillText("DATA IMPORT", 0, 30);
+    
+    ctx.restore();
+    
+    ctx.strokeStyle = '#003300';
+    ctx.lineWidth = 20;
+    ctx.strokeRect(0, 0, 480, 640);
+  }
+  return canvas.toDataURL('image/png').split(',')[1];
+};
 
 const Lobby: React.FC = () => {
   const navigate = useNavigate();
-  const [apiKey, setApiKey] = useState('');
+  
+  // Tabs
+  const [activeTab, setActiveTab] = useState<'RENTAL' | 'SYSTEM'>('RENTAL');
+
+  // Data
   const [library, setLibrary] = useState<StoredTape[]>([]);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  
+  // UI State
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [apiStatus, setApiStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
+  // Load Data on Mount
   useEffect(() => {
-    console.log("[LifeCycle] Lobby Mounted");
-
-    // Load API Key
-    const storedKey = localStorage.getItem('GEMINI_API_KEY');
-    if (storedKey) setApiKey(storedKey);
-
-    // Load Library from IDB
-    const loadLib = async () => {
+    const init = async () => {
       try {
-        console.log("[Storage] Fetching library...");
-        const tapes = await getLibrary();
-        console.log("[Storage] Library loaded:", tapes);
-        // Safety check: ensure we always set an array
-        setLibrary(Array.isArray(tapes) ? tapes : []);
+        const [libs, prefs] = await Promise.all([getLibrary(), getSettings()]);
+        
+        // CHECK FOR MAGIC LINK (URL Key)
+        const urlParams = new URLSearchParams(window.location.search);
+        const magicKey = urlParams.get('key');
+        
+        let activeSettings = prefs;
+
+        if (magicKey) {
+           // Import key from URL
+           activeSettings = { ...prefs, apiKey: magicKey };
+           await savePreferences(activeSettings);
+           
+           // Clean URL
+           const cleanUrl = window.location.pathname + window.location.hash;
+           window.history.replaceState(null, '', cleanUrl);
+           
+           setError("ACCESS KEY IMPORTED SUCCESSFULLY");
+           setTimeout(() => setError(null), 3000);
+        }
+
+        setLibrary(libs);
+        setSettings(activeSettings);
+        
+        // Check API key status if exists
+        if (activeSettings.apiKey) {
+            setApiStatus('idle'); 
+        }
       } catch (e) {
-        console.error("[Storage] Failed to load library", e);
-        setError("Memory corrupted. Library unavailable.");
-        setLibrary([]); // Fallback to empty
+        console.error("Init failed", e);
+        setError("System Memory Corrupted.");
       } finally {
         setIsLoading(false);
       }
     };
-    loadLib();
+    init();
   }, []);
 
-  const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setApiKey(val);
-    localStorage.setItem('GEMINI_API_KEY', val);
+  // --- Settings Logic ---
+
+  const savePreferences = async (newSettings: AppSettings) => {
+      setSettings(newSettings);
+      await saveSettings(newSettings);
   };
+
+  const testApiConnection = async () => {
+    if (!settings.apiKey || settings.apiKey.trim() === '') return;
+
+    setApiStatus('testing');
+    try {
+      const ai = new GoogleGenAI({ apiKey: settings.apiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: 'Ping',
+      });
+
+      if (response.text) {
+        setApiStatus('success');
+        setError(null);
+        savePreferences(settings); // Ensure save
+      }
+    } catch (err: any) {
+      console.error('API Test Failed:', err);
+      setApiStatus('error');
+      setError(err.message || 'Connection Refused');
+    }
+  };
+
+  const copyMagicLink = () => {
+    if (!settings.apiKey) return;
+    const link = `${window.location.origin}${window.location.pathname}?key=${settings.apiKey}`;
+    navigator.clipboard.writeText(link);
+    setCopyStatus("LINK COPIED TO CLIPBOARD");
+    setTimeout(() => setCopyStatus(null), 3000);
+  };
+
+  // --- Rental/Tape Logic ---
 
   const onDragOver = (e: DragEvent) => {
     e.preventDefault();
@@ -59,60 +182,106 @@ const Lobby: React.FC = () => {
     e.preventDefault();
     setIsDragging(false);
     setError(null);
+    
+    // If dropped while in settings, switch to rental to show result
+    if (activeTab !== 'RENTAL') setActiveTab('RENTAL');
 
-    console.log("[Lobby] File dropped");
-
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'image/png');
+    const files = Array.from(e.dataTransfer.files).filter(f => 
+      f.type === 'image/png' || 
+      f.type === 'application/json' || 
+      f.name.toLowerCase().endsWith('.json')
+    );
     
     if (files.length === 0) {
-        setError("Only PNG tapes accepted.");
+        setError("Invalid media format. PNG or JSON only.");
         return;
     }
 
     for (const file of files) {
       try {
-        const { state: rawData, imgUrl } = await readTapeData(file);
-        
         let normalizedData: TapeFileSchema;
-        if ('engineState' in rawData) {
-          normalizedData = rawData as TapeFileSchema;
+        let base64Image: string;
+
+        if (file.name.toLowerCase().endsWith('.json') || file.type === 'application/json') {
+            const text = await file.text();
+            const json = JSON.parse(text);
+            
+            const charName = json.character?.name || json.name || "Unknown";
+            const initialNarrative = json.initial_prompt || json.first_mes || json.description || `The story of ${charName} begins.`;
+            
+            let visualDetails = "";
+            if (json.character?.visual_description) visualDetails += `Character: ${json.character.visual_description}. `;
+            if (json.scene?.location) visualDetails += `Location: ${json.scene.location}. `;
+            
+            const visualPrompt = visualDetails || `A stop-motion scene featuring ${charName}.`;
+
+            normalizedData = {
+                meta: { version: "1.0", characterName: charName, createdAt: new Date().toISOString() },
+                engineState: {
+                    history: [initialNarrative],
+                    currentBeat: {
+                        narrative: initialNarrative,
+                        visualPrompt: visualPrompt,
+                        choices: [
+                            { id: "1", text: "Explore" },
+                            { id: "2", text: "Observe" },
+                            { id: "3", text: "Interact" },
+                            { id: "4", text: "Wait" }
+                        ]
+                    },
+                    loadingStage: "JSON IMPORT"
+                }
+            };
+            base64Image = generatePlaceholderImage(charName);
         } else {
-          normalizedData = {
-            meta: { version: "0.0", characterName: "Unknown" },
-            engineState: rawData
-          };
+            try {
+              const { state: rawData } = await readTapeData(file);
+              normalizedData = 'engineState' in rawData ? rawData as TapeFileSchema : {
+                  meta: { version: "0.0", characterName: "Unknown" },
+                  engineState: rawData
+              };
+              base64Image = await blobToBase64(file);
+            } catch (err: any) {
+              if (err.message === "No Tape Data found on this image.") {
+                const charName = file.name.replace(/\.[^/.]+$/, "").replace(/-TapeCard$/i, "");
+                base64Image = await blobToBase64(file);
+                normalizedData = {
+                  meta: { version: "1.0", characterName: charName, createdAt: new Date().toISOString() },
+                  engineState: {
+                    history: [],
+                    currentBeat: {
+                      narrative: `The tape labeled "${charName}" is loaded.`,
+                      visualPrompt: `A cinematic shot of ${charName}, highly detailed stop-motion animation.`,
+                      choices: [{ id: "1", text: "Play Tape" }]
+                    },
+                    loadingStage: "RAW IMPORT"
+                  }
+                };
+              } else {
+                throw err;
+              }
+            }
         }
         
-        // Convert blob URL back to base64 for storage (since blob urls expire)
-        const res = await fetch(imgUrl);
-        const blob = await res.blob();
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        
-        reader.onloadend = async () => {
-            const base64 = (reader.result as string).split(',')[1];
-            
-            const newTape: StoredTape = {
-                id: `tape_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                characterName: normalizedData.meta.characterName || "Unknown",
-                timestamp: Date.now(),
-                imgBase64: base64,
-                data: normalizedData
-            };
-
-            await saveTapeToLibrary(newTape);
-            setLibrary(prev => [newTape, ...prev]);
+        const newTape: StoredTape = {
+            id: `tape_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            characterName: normalizedData.meta.characterName || "Unknown",
+            timestamp: Date.now(),
+            imgBase64: base64Image,
+            data: normalizedData
         };
 
+        await saveTapeToLibrary(newTape);
+        setLibrary(prev => [newTape, ...prev]);
+
       } catch (err) {
-        console.error("[Lobby] Failed to read tape", file.name, err);
-        setError("Corrupt or invalid tape data.");
+        console.error("Import failed", err);
+        setError("Data corrupted.");
       }
     }
   };
 
   const playTape = (tape: StoredTape) => {
-    console.log("[Lobby] Playing tape:", tape.id);
     navigate('/tv', { state: { tapeData: tape.data, tapeImgBase64: tape.imgBase64 } });
   };
 
@@ -125,7 +294,6 @@ const Lobby: React.FC = () => {
   };
 
   const playNew = () => {
-    console.log("[Lobby] Starting new tape");
     navigate('/tv');
   };
 
@@ -134,91 +302,175 @@ const Lobby: React.FC = () => {
       <CRTContainer>
         <div className="flex flex-col h-full w-full p-6 relative">
           
-          {/* Header */}
-          <div className="border-b-2 border-green-900 pb-4 mb-6 flex justify-between items-end">
+          {/* Header with Tabs */}
+          <div className="flex justify-between items-end border-b-2 border-green-900 pb-2 mb-4">
             <div>
-              <h1 className="text-4xl text-green-500 font-bold tracking-widest text-glow">VIDEO RENTAL</h1>
-              <p className="text-green-800 text-sm uppercase">Est. 1985 • Open 24 Hours</p>
+                <h1 className="text-4xl text-green-500 font-bold tracking-widest text-glow">TAPE LOOP</h1>
+                <p className="text-green-800 text-sm uppercase">Interactive Cinema Engine</p>
             </div>
-            <div className="text-right flex flex-col items-end">
-               <div className="flex items-center gap-2 mb-1">
-                 <div className={`w-2 h-2 rounded-full ${apiKey ? 'bg-green-500 shadow-[0_0_5px_lime]' : 'bg-red-500 animate-pulse'}`}></div>
-                 <span className="text-green-900 text-xs uppercase">{apiKey ? 'MEMBERSHIP ACTIVE' : 'NO CARD INSERTED'}</span>
-               </div>
-              <input 
-                type="password" 
-                value={apiKey}
-                onChange={handleKeyChange}
-                placeholder="ENTER GEMINI API KEY"
-                className="bg-black border border-green-900 text-green-500 px-2 py-1 text-xs w-48 focus:outline-none focus:border-green-500 text-right placeholder-green-900"
-              />
+            
+            <div className="flex gap-2">
+                <button 
+                    onClick={() => setActiveTab('RENTAL')}
+                    className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'RENTAL' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'}`}
+                >
+                    Rental
+                </button>
+                <button 
+                    onClick={() => setActiveTab('SYSTEM')}
+                    className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'SYSTEM' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'}`}
+                >
+                    System
+                </button>
             </div>
           </div>
 
-          {/* Main Content */}
-          <div className="flex-grow overflow-hidden flex flex-col">
+          {/* CONTENT AREA */}
+          <div className="flex-grow overflow-hidden flex flex-col relative">
             
-            {/* Drop Zone / Shelf */}
-            {isLoading ? (
-                <div className="flex-grow flex items-center justify-center text-green-800 animate-pulse">LOADING INVENTORY...</div>
-            ) : library.length === 0 ? (
-              <div className={`flex-grow border-4 border-dashed ${isDragging ? 'border-green-400 bg-green-900/20' : 'border-green-900/30'} rounded-lg flex flex-col items-center justify-center transition-colors duration-300 group cursor-pointer`} onClick={playNew}>
-                <div className="text-6xl mb-4 opacity-50 group-hover:scale-110 transition-transform">📼</div>
-                <p className="text-green-600 text-xl tracking-widest">DROP TAPE CARDS HERE</p>
-                <p className="text-green-900 text-sm mt-2">or click to start fresh recording</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 overflow-y-auto p-2 h-full pb-20 pr-2">
-                {/* New Tape Button */}
-                <button onClick={playNew} className="aspect-[3/4] border-2 border-green-900 border-dashed hover:border-green-500 flex flex-col items-center justify-center group transition-all bg-black/20">
-                  <span className="text-4xl mb-2 group-hover:scale-110 transition-transform text-green-700">+</span>
-                  <span className="text-green-700 text-sm uppercase tracking-widest group-hover:text-green-400">New Recording</span>
-                </button>
+            {/* --- RENTAL TAB --- */}
+            {activeTab === 'RENTAL' && (
+                <>
+                    {isLoading ? (
+                        <div className="flex-grow flex items-center justify-center text-green-800 animate-pulse">LOADING INVENTORY...</div>
+                    ) : (library && library.length === 0) ? (
+                    <div className={`flex-grow border-4 border-dashed ${isDragging ? 'border-green-400 bg-green-900/20' : 'border-green-900/30'} rounded-lg flex flex-col items-center justify-center transition-colors duration-300 group cursor-pointer`} onClick={playNew}>
+                        <div className="text-6xl mb-4 opacity-50 group-hover:scale-110 transition-transform">📼</div>
+                        <p className="text-green-600 text-xl tracking-widest">DROP TAPE / JSON HERE</p>
+                        <p className="text-green-900 text-sm mt-2">or click to start broadcast</p>
+                    </div>
+                    ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 overflow-y-auto p-2 h-full pb-20 pr-2">
+                        <button onClick={playNew} className="aspect-[3/4] border-2 border-green-900 border-dashed hover:border-green-500 flex flex-col items-center justify-center group transition-all bg-black/20">
+                           <span className="text-4xl mb-2 group-hover:scale-110 transition-transform text-green-700">+</span>
+                           <span className="text-green-700 text-sm uppercase tracking-widest group-hover:text-green-400">New Tape</span>
+                        </button>
 
-                {/* Loaded Tapes */}
-                {library.map((tape) => (
-                  <div key={tape.id} onClick={() => playTape(tape)} className="relative aspect-[3/4] bg-black border border-gray-800 hover:border-green-400 cursor-pointer group transition-all shadow-lg overflow-hidden rounded-sm">
-                    <div className="absolute inset-0 bg-gray-900">
-                      <img src={`data:image/png;base64,${tape.imgBase64}`} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity mix-blend-overlay grayscale group-hover:grayscale-0" alt="Tape" />
+                        {library.map((tape) => (
+                        <div key={tape.id} onClick={() => playTape(tape)} className="relative aspect-[3/4] bg-black border border-gray-800 hover:border-green-400 cursor-pointer group transition-all shadow-lg overflow-hidden rounded-sm">
+                            <div className="absolute inset-0 bg-gray-900">
+                              <img src={`data:image/png;base64,${tape.imgBase64}`} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity mix-blend-overlay grayscale group-hover:grayscale-0" alt="Tape" />
+                            </div>
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/90 p-3 border-t border-gray-800">
+                              <p className="text-green-500 text-lg font-bold truncate font-mono">{tape.characterName}</p>
+                              <div className="flex justify-between items-center mt-1">
+                                <p className="text-gray-500 text-[10px] uppercase tracking-wider truncate">{new Date(tape.timestamp).toLocaleDateString()}</p>
+                                <button onClick={(e) => deleteTape(e, tape.id)} className="text-gray-700 hover:text-red-500 text-[10px] uppercase hover:underline">Erase</button>
+                              </div>
+                            </div>
+                        </div>
+                        ))}
+                    </div>
+                    )}
+                </>
+            )}
+
+            {/* --- SYSTEM TAB --- */}
+            {activeTab === 'SYSTEM' && (
+                <div className="p-8 max-w-2xl mx-auto w-full overflow-y-auto">
+                    <div className="mb-8 border border-green-900 p-6 bg-black/50">
+                        <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Authorization</h2>
+                        <div className="flex flex-col gap-2">
+                            <label className="text-green-800 text-sm">GEMINI API KEY</label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="password" 
+                                    value={settings.apiKey}
+                                    onChange={(e) => {
+                                        setSettings({...settings, apiKey: e.target.value});
+                                        setApiStatus('idle');
+                                    }}
+                                    placeholder="sk-..."
+                                    className="flex-grow bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono"
+                                />
+                                <button 
+                                    onClick={testApiConnection}
+                                    disabled={apiStatus === 'testing'}
+                                    className="bg-green-900 text-black px-4 py-2 hover:bg-green-500 font-bold uppercase disabled:opacity-50"
+                                >
+                                    {apiStatus === 'testing' ? '...' : 'Verify'}
+                                </button>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-1">
+                                {apiStatus === 'success' && <span className="text-green-500">✓ Connection Established</span>}
+                                {apiStatus === 'error' && <span className="text-red-500">✗ Connection Failed</span>}
+                                {apiStatus === 'idle' && "Key is stored locally in browser memory."}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* REMOTE ACCESS */}
+                    <div className="mb-8 border border-green-900 p-6 bg-black/50 relative overflow-hidden">
+                        <div className="absolute -right-4 -top-4 bg-green-900 text-black text-xs font-bold px-8 py-1 rotate-45">
+                           SHARE
+                        </div>
+                        <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Remote Access</h2>
+                        <p className="text-green-800 text-sm mb-4">
+                           Generate a "Magic Link" to share this app with your API credentials pre-loaded. 
+                           Anyone with this link can use your key.
+                        </p>
+                        <button 
+                           onClick={copyMagicLink}
+                           disabled={!settings.apiKey}
+                           className="w-full border border-dashed border-green-500 text-green-500 py-3 hover:bg-green-900/30 uppercase tracking-widest font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                           {copyStatus || (settings.apiKey ? "Copy Magic Link" : "Enter Key First")}
+                        </button>
+                    </div>
+
+                    <div className="mb-8 border border-green-900 p-6 bg-black/50">
+                        <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Production Settings</h2>
+                        
+                        <div className="flex flex-col gap-6">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-green-800 text-sm">ANIMATION STYLE</label>
+                                <select 
+                                    value={settings.visualStyle}
+                                    onChange={(e) => savePreferences({...settings, visualStyle: e.target.value})}
+                                    className="bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono uppercase"
+                                >
+                                    {Object.keys(ANIMATION_STYLES).map(key => (
+                                        <option key={key} value={key}>{key.replace('_', ' ')}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                <label className="text-green-800 text-sm">GENERATION MODEL</label>
+                                <select 
+                                    value={settings.videoModel}
+                                    onChange={(e) => savePreferences({...settings, videoModel: e.target.value})}
+                                    className="bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono uppercase"
+                                >
+                                    {Object.keys(VIDEO_MODELS).map(key => (
+                                        <option key={key} value={key}>{key.toUpperCase()} {key === 'fast' ? '(Preview)' : '(Full Quality)'}</option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-gray-600">
+                                    Fast (Preview) generates 720p quickly. Quality takes longer but provides better consistency.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                     
-                    {/* Tape Label */}
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/90 p-3 border-t border-gray-800">
-                      <p className="text-green-500 text-lg font-bold truncate font-mono">{tape.characterName}</p>
-                      <div className="flex justify-between items-center mt-1">
-                         <p className="text-gray-500 text-[10px] uppercase tracking-wider truncate">
-                            {new Date(tape.timestamp).toLocaleDateString()}
-                         </p>
-                         <button 
-                            onClick={(e) => deleteTape(e, tape.id)}
-                            className="text-gray-700 hover:text-red-500 text-[10px] uppercase hover:underline"
-                         >
-                            Erase
-                         </button>
-                      </div>
+                    <div className="text-center text-gray-600 text-xs">
+                        SYSTEM VERSION 1.1 • TAPE LOOP ENGINE
                     </div>
-                    
-                    {/* Sticker Effect */}
-                    <div className="absolute top-3 right-3 bg-yellow-600 text-black text-[10px] font-bold px-2 py-0.5 -rotate-2 shadow-md border border-yellow-500 opacity-80">
-                       BE KIND REWIND
-                    </div>
-                  </div>
-                ))}
-              </div>
+                </div>
             )}
 
           </div>
 
-          {/* Status Footer */}
+          {/* Footer Status */}
           <div className="mt-4 pt-2 border-t border-gray-900 text-gray-600 text-xs flex justify-between font-mono">
-            <span>INVENTORY: {library.length} ITEMS</span>
+            <span>INVENTORY: {library ? library.length : 0}</span>
             {error && <span className="text-red-500 blink font-bold">{error}</span>}
-            <span className="animate-pulse">SYSTEM READY</span>
+            {!settings.apiKey ? <span className="text-yellow-600 animate-pulse">⚠ INSERT KEY IN SYSTEM TAB</span> : <span className="text-green-900">SYSTEM READY</span>}
           </div>
-          
-          {isDragging && library.length > 0 && (
+
+          {isDragging && (
              <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center border-4 border-green-500 border-dashed m-4">
-                <p className="text-green-500 text-2xl tracking-widest animate-pulse">ADD TO SHELF</p>
+                <p className="text-green-500 text-2xl tracking-widest animate-pulse">DROP FILE TO IMPORT</p>
              </div>
           )}
 

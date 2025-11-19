@@ -6,21 +6,31 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Serve static files from the dist directory (created by npm run build)
+// Google App Engine sets process.env.PORT. 
+// Default to 8080 for local testing if not set.
+const PORT = parseInt(process.env.PORT) || 8080;
+
+// Serve static files from the dist directory
 app.use(express.static(path.join(__dirname, 'dist')));
 
+// Basic Health Check for Load Balancers
+app.get('/_ah/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // Fallback to index.html for SPA routing
+// This ensures that reloading the page on a sub-route (e.g., /tv) works
 app.get('*', (req, res) => {
-  // If dist doesn't exist yet, warn the user
-  if (process.env.NODE_ENV !== 'production') {
-    res.send('App is running in server mode. Run "npm run build" first, or use "npm run dev" for development.');
-  } else {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-  }
+    const indexPath = path.join(__dirname, 'dist', 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            console.error("Error sending index.html:", err);
+            res.status(500).send('Server Error: Could not load application.');
+        }
+    });
 });
 
 app.listen(PORT, () => {
-  console.log(`📺 Living TV Server running on http://localhost:${PORT}`);
+  console.log(`📺 Living TV Server running on port ${PORT}`);
 });

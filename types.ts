@@ -32,3 +32,17 @@ export interface TapeFileSchema {
     loadingStage?: string;
   };
 }
+
+export interface StoredTape {
+  id: string;
+  characterName: string;
+  timestamp: number;
+  imgBase64: string;
+  data: TapeFileSchema;
+}
+
+export interface AppSettings {
+  apiKey: string;
+  visualStyle: string; // Key from ANIMATION_STYLES
+  videoModel: string;  // Key from VIDEO_MODELS
+}

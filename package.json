@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Infinite interactive storytelling engine",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

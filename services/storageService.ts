@@ -1,15 +1,10 @@
-import { get, set } from 'idb-keyval';
-import { TapeFileSchema } from '../types';
 
-export interface StoredTape {
-  id: string;
-  characterName: string;
-  timestamp: number;
-  imgBase64: string;
-  data: TapeFileSchema;
-}
+import { get, set } from 'idb-keyval';
+import { StoredTape, AppSettings } from '../types';
+import { ANIMATION_STYLES, VIDEO_MODELS } from '../constants';
 
 const LIBRARY_KEY = 'living-tv-library';
+const SETTINGS_KEY = 'living-tv-settings';
 
 export const saveTapeToLibrary = async (tape: StoredTape): Promise<void> => {
   const library = (await get<StoredTape[]>(LIBRARY_KEY)) || [];
@@ -38,4 +33,27 @@ export const deleteTapeFromLibrary = async (id: string): Promise<void> => {
 
 export const clearLibrary = async (): Promise<void> => {
   await set(LIBRARY_KEY, []);
+};
+
+// --- Settings Management ---
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  apiKey: '',
+  visualStyle: 'claymation',
+  videoModel: 'fast'
+};
+
+export const getSettings = async (): Promise<AppSettings> => {
+  const stored = await get<AppSettings>(SETTINGS_KEY);
+  if (!stored) return DEFAULT_SETTINGS;
+  return { ...DEFAULT_SETTINGS, ...stored };
+};
+
+export const saveSettings = async (settings: AppSettings): Promise<void> => {
+  await set(SETTINGS_KEY, settings);
+  // Also sync API key to localStorage for legacy/geminiService compatibility if needed,
+  // though ideally we switch to using this settings object everywhere.
+  if (settings.apiKey) {
+    localStorage.setItem("GEMINI_API_KEY", settings.apiKey);
+  }
 };

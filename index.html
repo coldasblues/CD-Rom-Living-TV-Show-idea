@@ -11,10 +11,13 @@
     <style>
       body {
         font-family: 'VT323', monospace;
-        background-color: #111;
-        overflow: hidden; /* Prevent scrolling on the CRT */
+        background-color: #050505;
+        color: #33ff33;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
       }
-      /* CRT Scanline Effect */
+      /* Scanlines & CRT Effects */
       .scanlines {
         background: linear-gradient(
           to bottom,
@@ -26,20 +29,20 @@
         background-size: 100% 4px;
         pointer-events: none;
       }
-      .flicker {
-        animation: flicker 0.15s infinite;
-      }
-      @keyframes flicker {
-        0% { opacity: 0.97; }
-        50% { opacity: 1.0; }
-        100% { opacity: 0.98; }
-      }
-      /* Text Glow */
       .text-glow {
         text-shadow: 0 0 5px rgba(50, 205, 50, 0.8);
       }
       
-      /* Scrollbar for the library */
+      /* Utility Animations */
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
+      }
+      .blink {
+        animation: blink 1s step-end infinite;
+      }
+      
+      /* Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -53,29 +56,31 @@
         background: #555; 
       }
     </style>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "react": "https://esm.sh/react@18.2.0",
-    "react/": "https://esm.sh/react@18.2.0/",
-    "react-dom": "https://esm.sh/react-dom@18.2.0",
-    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3?external=react,react-dom",
-    "@remix-run/router": "https://esm.sh/@remix-run/router@1.15.3",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.9.6",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
     "vite": "https://aistudiocdn.com/vite@^7.2.2",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1",
-    "url": "https://aistudiocdn.com/url@^0.11.4",
     "express": "https://aistudiocdn.com/express@^5.1.0",
     "path": "https://aistudiocdn.com/path@^0.12.7",
-    "idb-keyval": "https://esm.sh/idb-keyval@6.2.1"
+    "url": "https://aistudiocdn.com/url@^0.11.4",
+    "idb-keyval": "https://aistudiocdn.com/idb-keyval@^6.2.2"
   }
 }
 </script>
 </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="height: 100vh; width: 100vw; display: flex; align-items: center; justify-content: center; flex-direction: column; background-color: #000; color: #33ff33; font-family: monospace;">
+        <h1 style="font-size: 2rem; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.2em;">Initializing System...</h1>
+        <p style="opacity: 0.7; font-size: 0.8rem;">LOADING MODULES</p>
+      </div>
+    </div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

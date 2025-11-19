@@ -28,29 +28,118 @@ class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="fixed inset-0 z-[100] bg-black text-red-600 font-mono p-4 flex flex-col items-center justify-center">
-            <div className="border-4 border-red-600 p-8 max-w-3xl w-full bg-red-950/10 shadow-[0_0_50px_rgba(220,38,38,0.2)]">
-              <h1 className="text-6xl mb-4 font-bold tracking-widest animate-pulse text-center">FATAL ERROR</h1>
-              <div className="h-px w-full bg-red-600 mb-8"></div>
-              
-              <p className="text-xl mb-4 text-red-400 uppercase tracking-wider text-center">System process terminated unexpectedly</p>
-              
-              <div className="bg-black p-4 border border-red-900 rounded text-left mb-8 max-h-96 overflow-y-auto font-mono text-sm">
-                <p className="font-bold mb-2 text-red-300">{this.state.error?.toString()}</p>
-                <pre className="text-xs text-red-500/60 whitespace-pre-wrap">
-                  {this.state.errorInfo?.componentStack}
-                </pre>
-              </div>
+        <div style={{
+            backgroundColor: '#050505',
+            color: '#00ff00',
+            padding: '40px',
+            fontFamily: "'VT323', monospace",
+            minHeight: '100vh',
+            overflow: 'auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+        }}>
+            <div style={{
+              maxWidth: '900px',
+              width: '100%',
+              border: '2px solid #00ff00',
+              padding: '30px',
+              backgroundColor: '#0a0a0a',
+              boxShadow: '0 0 20px rgba(0, 255, 0, 0.3)'
+            }}>
+              <h1 style={{
+                fontSize: '48px',
+                marginBottom: '20px',
+                textAlign: 'center',
+                letterSpacing: '0.2em',
+                textShadow: '0 0 10px rgba(0, 255, 0, 0.8)',
+                borderBottom: '2px solid #00ff00',
+                paddingBottom: '15px'
+              }}>
+                ⚠ SYSTEM FAILURE ⚠
+              </h1>
 
-              <div className="text-center">
+              <div style={{ marginBottom: '25px', marginTop: '25px' }}>
+                <h2 style={{
+                  fontSize: '24px',
+                  marginBottom: '12px',
+                  letterSpacing: '0.1em',
+                  color: '#00cc00'
+                }}>
+                  &gt; ERROR DETECTED:
+                </h2>
+                  <pre style={{
+                    backgroundColor: '#000',
+                    border: '1px solid #003300',
+                    padding: '15px',
+                    overflow: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word',
+                    fontSize: '18px',
+                    color: '#00ff00',
+                    lineHeight: '1.5'
+                  }}>
+                  {this.state.error?.toString()}
+                  </pre>
+                </div>
+
+              {this.state.errorInfo && (
+                <div>
+                  <h2 style={{
+                    fontSize: '24px',
+                    marginBottom: '12px',
+                    letterSpacing: '0.1em',
+                    color: '#00cc00'
+                  }}>
+                    &gt; STACK TRACE:
+                  </h2>
+                  <pre style={{
+                    backgroundColor: '#000',
+                    border: '1px solid #003300',
+                    padding: '15px',
+                    overflow: 'auto',
+                    fontSize: '14px',
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word',
+                    color: '#00cc00',
+                    lineHeight: '1.4',
+                    maxHeight: '400px'
+                  }}>
+                    {this.state.errorInfo.componentStack}
+                  </pre>
+                </div>
+              )}
+
+              <div style={{
+                marginTop: '30px',
+                textAlign: 'center',
+                fontSize: '16px',
+                color: '#006600',
+                borderTop: '1px solid #003300',
+                paddingTop: '15px'
+              }}>
+                PRESS F12 FOR DEVELOPER CONSOLE • CHECK BROWSER CONSOLE FOR MORE DETAILS
+              </div>
+              
+              <div style={{ textAlign: 'center', marginTop: '20px' }}>
                 <button 
                     onClick={() => window.location.reload()} 
-                    className="border-2 border-red-600 text-red-600 px-8 py-3 hover:bg-red-600 hover:text-black transition-colors uppercase tracking-[0.2em] font-bold text-lg"
+                    style={{
+                        border: '2px solid #00ff00',
+                        background: 'transparent',
+                        color: '#00ff00',
+                        padding: '10px 20px',
+                        fontFamily: 'inherit',
+                        fontSize: '18px',
+                        cursor: 'pointer',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em'
+                    }}
                 >
-                    HARD REBOOT
+                    Hard Reboot
                 </button>
               </div>
-          </div>
+            </div>
         </div>
       );
     }

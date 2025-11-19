@@ -1,29 +1,36 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { StoryBeat } from "../types";
-import { SYSTEM_INSTRUCTION, VISUAL_STYLE_PROMPT } from "../constants";
+import { SYSTEM_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS } from "../constants";
 
 // Helper to retrieve the API key string
 async function getApiKey(): Promise<string> {
-  // 1. Check Local Storage (User Input in Lobby)
+  // 1. Check URL Parameters (Magic Link)
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlKey = urlParams.get('key');
+  if (urlKey) {
+    return urlKey;
+  }
+
+  // 2. Check Local Storage (User Input in Lobby)
   const localKey = localStorage.getItem("GEMINI_API_KEY");
   if (localKey) {
     return localKey;
   }
 
-  // 2. Check Standard Environment Variable
+  // 3. Check Standard Environment Variable
   if (process.env.API_KEY) {
     return process.env.API_KEY;
   }
 
-  // 3. Check Vite Environment Variable
+  // 4. Check Vite Environment Variable
   // @ts-ignore
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
     // @ts-ignore
     return import.meta.env.VITE_GEMINI_API_KEY;
   }
 
-  // 4. Check AI Studio Context (Project IDX / Cloud)
+  // 5. Check AI Studio Context (Project IDX / Cloud)
   const win = window as any;
   if (win.aistudio && win.aistudio.hasSelectedApiKey) {
     const hasKey = await win.aistudio.hasSelectedApiKey();
@@ -34,7 +41,7 @@ async function getApiKey(): Promise<string> {
     return process.env.API_KEY || '';
   }
 
-  throw new Error("No API Key found. Please enter one in the Lobby.");
+  throw new Error("No API Key found. Please enter one in the SYSTEM tab.");
 }
 
 // Helper to ensure we have a key before making requests
@@ -55,7 +62,7 @@ export const generateStoryBeat = async (
 
   const prompt = userChoice
     ? `The viewer chose: "${userChoice}". Continue the story.`
-    : `Start the first scene of a mysterious adventure involving a clay character finding a strange object.`;
+    : `Start the first scene of a mysterious adventure involving a character finding a strange object.`;
 
   const parts: any[] = [{ text: prompt }];
 
@@ -109,19 +116,25 @@ export const generateStoryBeat = async (
  */
 export const generateVideoClip = async (
   visualDescription: string,
-  lastFrameBase64: string | null
+  lastFrameBase64: string | null,
+  styleKey: string = 'claymation',
+  modelKey: string = 'fast'
 ): Promise<string> => {
   const ai = await getAuthenticatedClient();
-  const fullPrompt = `${visualDescription}, ${VISUAL_STYLE_PROMPT}`;
+  
+  const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
+  const modelName = VIDEO_MODELS[modelKey as keyof typeof VIDEO_MODELS] || VIDEO_MODELS['fast'];
+  
+  const fullPrompt = `${visualDescription}, ${stylePrompt}`;
 
-  console.log("Generating video with prompt:", fullPrompt);
+  console.log(`[Veo] Generating (${modelName}) with prompt:`, fullPrompt);
 
   let operation;
 
   if (lastFrameBase64) {
     // Continuation mode: Use image-to-video (or text+image-to-video)
     operation = await ai.models.generateVideos({
-      model: "veo-3.1-fast-generate-preview",
+      model: modelName,
       prompt: fullPrompt,
       image: {
         imageBytes: lastFrameBase64,
@@ -136,7 +149,7 @@ export const generateVideoClip = async (
   } else {
     // Cold start: Text-to-video only
     operation = await ai.models.generateVideos({
-      model: "veo-3.1-fast-generate-preview",
+      model: modelName,
       prompt: fullPrompt,
       config: {
         numberOfVideos: 1,
@@ -160,8 +173,6 @@ export const generateVideoClip = async (
   }
 
   // Fetch the actual video bytes to create a blob URL for the <video> tag
-  // Note: We must append the API key to the download link as per instructions.
-  // We need to retrieve the specific key we used for the client.
   const apiKey = await getApiKey();
 
   const videoRes = await fetch(`${videoUri}&key=${apiKey}`);

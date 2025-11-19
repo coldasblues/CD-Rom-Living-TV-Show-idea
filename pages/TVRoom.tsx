@@ -1,12 +1,14 @@
+
 import React, { useState, useRef, useEffect, DragEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CRTContainer from '../components/CRTContainer';
 import TapeDeck, { TapeDeckHandle } from '../components/TapeDeck';
 import ControlPanel from '../components/ControlPanel';
 import NarrativeLog from '../components/NarrativeLog';
-import { GameState, StoryBeat, TapeFileSchema } from '../types';
+import { GameState, StoryBeat, TapeFileSchema, AppSettings } from '../types';
 import { generateStoryBeat, generateVideoClip } from '../services/geminiService';
 import { createTapeBlob, readTapeData } from '../utils/tapeUtils';
+import { getSettings, DEFAULT_SETTINGS } from '../services/storageService';
 
 const INITIAL_STATE: GameState = {
   videoUrl: null,
@@ -17,7 +19,6 @@ const INITIAL_STATE: GameState = {
   history: [],
 };
 
-// Helper to convert base64 to Blob
 const base64ToBlob = (base64: string, type = 'image/png') => {
   const binStr = atob(base64);
   const len = binStr.length;
@@ -33,11 +34,12 @@ const TVRoom: React.FC = () => {
   const navigate = useNavigate();
   const tapeDeckRef = useRef<TapeDeckHandle>(null);
   
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+
   // Initialize State
   const [gameState, setGameState] = useState<GameState>(() => {
     if (location.state && location.state.tapeData) {
         const data = location.state.tapeData as TapeFileSchema;
-        // If coming from Library, we might have base64 passed directly
         const preloadedBase64 = location.state.tapeImgBase64 || null;
 
         return {
@@ -54,8 +56,14 @@ const TVRoom: React.FC = () => {
   const [isStarted, setIsStarted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Check if we are starting with a tape loaded
+  // Load Settings & Start check
   useEffect(() => {
+      const loadConfig = async () => {
+          const s = await getSettings();
+          setSettings(s);
+      };
+      loadConfig();
+
       if (gameState.currentBeat && gameState.lastFrameBase64) {
           setIsStarted(true);
       }
@@ -65,12 +73,10 @@ const TVRoom: React.FC = () => {
       navigate('/');
   };
 
-  // Handle the core loop
   const runLoop = async (choiceText: string | null) => {
     if (gameState.isLoading) return;
 
     try {
-      // 1. Capture Frame (if this isn't the first run)
       let capturedFrame = gameState.lastFrameBase64;
       if (choiceText && tapeDeckRef.current) {
          const frame = tapeDeckRef.current.captureFrame();
@@ -86,7 +92,6 @@ const TVRoom: React.FC = () => {
         loadingStage: 'WRITING SCRIPT...' 
       }));
 
-      // 2. Generate Story (Text)
       const beat: StoryBeat = await generateStoryBeat(
         gameState.history,
         choiceText,
@@ -96,12 +101,16 @@ const TVRoom: React.FC = () => {
       setGameState(prev => ({ 
         ...prev, 
         currentBeat: beat,
-        loadingStage: 'FILMING SCENE (VEO)...',
+        loadingStage: `FILMING SCENE (${settings.visualStyle.toUpperCase()})...`,
         history: [...prev.history, beat.narrative]
       }));
 
-      // 3. Generate Video
-      const videoUrl = await generateVideoClip(beat.visualPrompt, capturedFrame);
+      const videoUrl = await generateVideoClip(
+          beat.visualPrompt, 
+          capturedFrame, 
+          settings.visualStyle, 
+          settings.videoModel
+      );
 
       setGameState(prev => ({
         ...prev,
@@ -117,13 +126,13 @@ const TVRoom: React.FC = () => {
         isLoading: false, 
         loadingStage: 'ERROR - RETRY' 
       }));
-      alert("Transmission interrupted. Check API Key in Lobby.");
+      alert("Transmission interrupted. Check API Key in System Tab.");
     }
   };
 
   const handleStart = () => {
     setIsStarted(true);
-    runLoop(null); // Start with null choice (cold start)
+    runLoop(null);
   };
 
   const handleChoice = (choiceId: string) => {
@@ -132,8 +141,6 @@ const TVRoom: React.FC = () => {
       runLoop(choice.text);
     }
   };
-
-  // --- Tape Management ---
 
   const handleEject = async () => {
     let currentFrameBase64 = tapeDeckRef.current?.captureFrame();
