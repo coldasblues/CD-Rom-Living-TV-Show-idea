@@ -1,0 +1,19 @@
+export interface Choice {
+  id: string;
+  text: string;
+}
+
+export interface StoryBeat {
+  narrative: string;
+  visualPrompt: string; // Used for the next video generation
+  choices: Choice[];
+}
+
+export interface GameState {
+  videoUrl: string | null;
+  currentBeat: StoryBeat | null;
+  lastFrameBase64: string | null; // The "Tape" logic
+  isLoading: boolean;
+  loadingStage: string; // 'Writing Script' | 'Filming Scene' | 'Ready'
+  history: string[]; // Keep track of narrative for context
+}

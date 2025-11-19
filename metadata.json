@@ -1,0 +1,5 @@
+{
+  "name": "The Tape Loop",
+  "description": "An infinite, interactive stop-motion TV show engine where you drive the plot. Powered by Gemini 3 Pro and Veo.",
+  "requestFramePermissions": []
+}
