@@ -317,7 +317,11 @@ const TVRoom: React.FC = () => {
 
   // Determine effective video source (Content vs Static)
   const effectiveVideoSrc = gameState.isLoading ? PLACEHOLDER_VIDEO : gameState.videoUrl;
-  const effectiveLoop = gameState.isLoading; 
+  
+  // Always loop the video. 
+  // When isLoading is true, it loops the static noise. 
+  // When isLoading is false, it loops the content clip.
+  const effectiveLoop = true; 
   
   // Hide narrative/choices during loading to prevent spoilers
   // We show a placeholder message instead

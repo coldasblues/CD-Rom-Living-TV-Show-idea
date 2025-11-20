@@ -98,55 +98,81 @@ async function generateStoryBeatOpenRouter(
     ? `The viewer chose: "${userChoice}". Continue the story.`
     : `Start the first scene of a mysterious adventure involving a character finding a strange object.`;
 
-    const messages: any[] = [
-        {
-            role: "system",
-            content: SYSTEM_INSTRUCTION
+    // Internal helper to perform the fetch so we can retry cleanly
+    const makeRequest = async (includeImage: boolean) => {
+        const messages: any[] = [
+            { role: "system", content: SYSTEM_INSTRUCTION }
+        ];
+
+        // Build User content array (Text + optional Image)
+        const userContent: any[] = [
+            { type: "text", text: `History: ${previousContext.slice(-3).join(' ')}\n\nTask: ${prompt}` }
+        ];
+
+        if (includeImage && lastFrameBase64) {
+            userContent.push({
+                type: "image_url",
+                image_url: {
+                    url: `data:image/png;base64,${lastFrameBase64}`
+                }
+            });
         }
-    ];
 
-    // Build User content array (Text + optional Image)
-    const userContent: any[] = [
-        { type: "text", text: `History: ${previousContext.slice(-3).join(' ')}\n\nTask: ${prompt}` }
-    ];
+        messages.push({ role: "user", content: userContent });
 
-    if (lastFrameBase64) {
-        userContent.push({
-            type: "image_url",
-            image_url: {
-                url: `data:image/png;base64,${lastFrameBase64}`
-            }
+        console.log(`[OpenRouter] Generating Story using model: ${modelId} (Vision: ${includeImage})`);
+
+        // NOTE: We purposely omit 'response_format' here. 
+        // Some providers (like DeepInfra/Nvidia) return 405 if 'response_format' is present at all.
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "HTTP-Referer": window.location.origin,
+                "X-Title": "Living TV Show",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: modelId, 
+                messages: messages
+            })
         });
+
+        const responseText = await response.text(); // Read once to handle both error and success text
+
+        if (!response.ok) {
+            // Check for Image Compatibility Errors (404 No endpoints, or 400 Bad Request related to multimodal)
+            // OpenRouter often sends 404 with "No endpoints found that support image input"
+            if ((response.status === 404 || response.status === 400) && 
+                (responseText.includes("support image input") || responseText.includes("multimodal"))) {
+                throw new Error("IMAGE_NOT_SUPPORTED");
+            }
+            throw new Error(`OpenRouter Error: ${response.status} - ${responseText}`);
+        }
+
+        return JSON.parse(responseText);
+    };
+
+    let data;
+    try {
+        // Attempt 1: Try WITH image if available
+        data = await makeRequest(!!lastFrameBase64);
+    } catch (e: any) {
+        if (e.message === "IMAGE_NOT_SUPPORTED" && lastFrameBase64) {
+            console.warn("[OpenRouter] Selected model does not support vision. Falling back to Text-Only mode.");
+            // Attempt 2: Retry WITHOUT image
+            data = await makeRequest(false);
+        } else {
+            throw e;
+        }
     }
 
-    messages.push({ role: "user", content: userContent });
-
-    console.log(`[OpenRouter] Generating Story using model: ${modelId}`);
-
-    // NOTE: We purposely omit 'response_format' here. 
-    // Some providers (like DeepInfra/Nvidia) return 405 if 'response_format' is present at all.
-    // We rely on the robust JSON parser below to handle unstructured text.
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "HTTP-Referer": window.location.origin,
-            "X-Title": "Living TV Show",
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            model: modelId, 
-            messages: messages
-        })
-    });
-
-    if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`OpenRouter Error: ${response.status} - ${err}`);
+    if (!data || !data.choices || !data.choices[0]) {
+        console.error("[OpenRouter] Invalid Response Structure:", data);
+        throw new Error("Model returned an empty or invalid response (missing choices).");
     }
 
-    const data = await response.json();
-    let text = data.choices[0]?.message?.content;
+    let text = data.choices[0].message?.content;
 
     if (!text) throw new Error("OpenRouter returned empty content");
 
@@ -300,7 +326,14 @@ export const generateVideoClip = async (
         if (!response.ok) throw new Error("OpenRouter Video Request Failed");
         
         const data = await response.json();
-        const content = data.choices[0]?.message?.content;
+        
+        // SAFEGUARD FOR UNDEFINED CHOICES
+        if (!data || !data.choices || !data.choices[0]) {
+             console.warn("[OpenRouter] Model returned text but no choices/content. Falling back.", data);
+             throw new Error("VIDEO_GEN_UNSUPPORTED_PROVIDER");
+        }
+        
+        const content = data.choices[0].message?.content;
 
         // CHECK: Did we get a URL?
         // Some models might return a URL in the content string

@@ -1,14 +1,50 @@
 import { fal } from "@fal-ai/client";
 
-// Helper: Convert Base64 string to Blob
-const base64ToBlob = (base64: string, type = 'image/png'): Blob => {
-  const binStr = atob(base64);
-  const len = binStr.length;
-  const arr = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    arr[i] = binStr.charCodeAt(i);
-  }
-  return new Blob([arr], { type });
+// Helper: Optimize image for upload (Resize + JPEG compression)
+// Fal.ai has a 10MB limit, and PNGs can easily exceed this or be unnecessarily large.
+const optimizeImageForUpload = async (base64: string): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous"; 
+    img.onload = () => {
+      // Target 720p width to save space, most video models generate 720p anyway
+      const MAX_WIDTH = 1280; 
+      let width = img.width;
+      let height = img.height;
+
+      if (width > MAX_WIDTH) {
+        height = (height * MAX_WIDTH) / width;
+        width = MAX_WIDTH;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+          reject(new Error("Canvas context failed"));
+          return;
+      }
+      
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // Convert to JPEG with 85% quality to drastically reduce size compared to PNG
+      canvas.toBlob((blob) => {
+          if (blob) {
+              console.log(`[Fal.ai] Image optimized: ${width}x${height}, ${Math.round(blob.size / 1024)}KB`);
+              resolve(blob);
+          } else {
+              reject(new Error("Blob creation failed"));
+          }
+      }, 'image/jpeg', 0.85);
+    };
+    img.onerror = (e) => reject(new Error("Failed to load image for optimization"));
+    
+    // Handle cases where prefix might already exist or not
+    const src = base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`;
+    img.src = src;
+  });
 };
 
 // Helper: Recursive search for video URL
@@ -75,14 +111,20 @@ export const generateFalClip = async (
     // 2. Upload Image if present
     if (lastFrameBase64) {
       try {
+        console.log("[Fal.ai] Optimizing reference frame...");
+        // Use optimization helper to resize/compress before upload
+        const blob = await optimizeImageForUpload(lastFrameBase64);
+        
         console.log("[Fal.ai] Uploading reference frame...");
-        const blob = base64ToBlob(lastFrameBase64);
         const url = await fal.storage.upload(blob);
         uploadedImageUrl = url;
         console.log("[Fal.ai] Image uploaded:", uploadedImageUrl);
       } catch (e) {
         console.error("[Fal.ai] Image upload failed:", e);
-        // Continue without image if upload fails
+        // Continue without image if upload fails? 
+        // No, usually for tape loop continuity this is critical, but we fall back to text-to-video
+        // if the image fails, rather than crashing the whole flow.
+        console.warn("[Fal.ai] Continuing with Text-to-Video fallback due to upload failure.");
       }
     }
 
@@ -157,6 +199,14 @@ export const generateFalClip = async (
           } catch (e) {
              console.error("[Fal.ai] Error Body (Raw):", error.body);
           }
+      }
+
+      // Check for specific Fal validation messages
+      if (error.body && error.body.detail && Array.isArray(error.body.detail)) {
+         const details = error.body.detail.map((d: any) => d.msg).join('; ');
+         if (details) {
+            throw new Error(`Fal.ai Validation Error: ${details}`);
+         }
       }
       
       const message = error.message || "Unknown Fal.ai error";

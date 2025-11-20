@@ -94,7 +94,7 @@ const TapeDeck = forwardRef<TapeDeckHandle, TapeDeckProps>(({ videoSrc, staticIm
           playsInline
           onEnded={onEnded}
           loop={loop}
-          muted={loop} // Always mute static/loops to prevent audio spikes
+          muted={isProcessing} // Only mute if processing (static noise), allow audio for looping content
           autoPlay
         >
           {/* Using src on parent video tag prevents race conditions with <source> tags */}
