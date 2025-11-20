@@ -1,4 +1,5 @@
 
+
 export interface Choice {
   id: string;
   text: string;
@@ -25,6 +26,7 @@ export interface TapeFileSchema {
     version: string;
     characterName: string;
     createdAt?: string;
+    visualStyle?: string; // Persist the art style (e.g. 'vintage_anime')
   };
   engineState: {
     history: string[];
@@ -45,4 +47,16 @@ export interface AppSettings {
   apiKey: string;
   visualStyle: string; // Key from ANIMATION_STYLES
   videoModel: string;  // Key from VIDEO_MODELS
+  openRouterModel: string; // Custom model ID for OpenRouter
+}
+
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  description?: string;
+  context_length?: number;
+  pricing?: {
+    prompt: string;
+    completion: string;
+  };
 }

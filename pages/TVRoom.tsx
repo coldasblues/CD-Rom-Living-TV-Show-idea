@@ -9,6 +9,7 @@ import { GameState, StoryBeat, TapeFileSchema, AppSettings } from '../types';
 import { generateStoryBeat, generateVideoClip } from '../services/geminiService';
 import { createTapeBlob, readTapeData } from '../utils/tapeUtils';
 import { getSettings, DEFAULT_SETTINGS } from '../services/storageService';
+import { ANIMATION_STYLES } from '../constants';
 
 const INITIAL_STATE: GameState = {
   videoUrl: null,
@@ -47,7 +48,7 @@ const TVRoom: React.FC = () => {
             currentBeat: data.engineState.currentBeat,
             history: data.engineState.history,
             lastFrameBase64: preloadedBase64,
-            loadingStage: 'TAPE INSERTED',
+            loadingStage: 'TAPE LOADED',
         };
     }
     return INITIAL_STATE;
@@ -58,14 +59,28 @@ const TVRoom: React.FC = () => {
 
   // Load Settings & Start check
   useEffect(() => {
-      const loadConfig = async () => {
-          const s = await getSettings();
-          setSettings(s);
+      const init = async () => {
+          // 1. Load Global Settings
+          const globalSettings = await getSettings();
+          
+          // 2. Check if Tape has specific style override
+          let activeSettings = { ...globalSettings };
+          
+          if (location.state && location.state.tapeData) {
+             const meta = (location.state.tapeData as TapeFileSchema).meta;
+             if (meta.visualStyle && ANIMATION_STYLES[meta.visualStyle]) {
+                 console.log(`[System] Tape overrides style to: ${meta.visualStyle}`);
+                 activeSettings.visualStyle = meta.visualStyle;
+             }
+          }
+
+          setSettings(activeSettings);
       };
-      loadConfig();
+      
+      init();
 
       if (gameState.currentBeat && gameState.lastFrameBase64) {
-          setIsStarted(true);
+          // Allow user to manually start via button to avoid autoplay policy issues
       }
   }, []);
 
@@ -77,6 +92,10 @@ const TVRoom: React.FC = () => {
     if (gameState.isLoading) return;
 
     try {
+      // Important: Clear current video to force freeze-frame display
+      // This creates the visual bridge between segments
+      setGameState(prev => ({ ...prev, videoUrl: null }));
+
       let capturedFrame = gameState.lastFrameBase64;
       if (choiceText && tapeDeckRef.current) {
          const frame = tapeDeckRef.current.captureFrame();
@@ -105,34 +124,68 @@ const TVRoom: React.FC = () => {
         history: [...prev.history, beat.narrative]
       }));
 
-      const videoUrl = await generateVideoClip(
-          beat.visualPrompt, 
-          capturedFrame, 
-          settings.visualStyle, 
-          settings.videoModel
-      );
+      try {
+          const videoUrl = await generateVideoClip(
+              beat.visualPrompt, 
+              capturedFrame, 
+              settings.visualStyle, 
+              settings.videoModel
+          );
 
-      setGameState(prev => ({
-        ...prev,
-        videoUrl,
-        isLoading: false,
-        loadingStage: 'PLAYBACK'
-      }));
+          setGameState(prev => ({
+            ...prev,
+            videoUrl,
+            isLoading: false,
+            loadingStage: 'PLAYBACK'
+          }));
+      } catch (vidError: any) {
+          // Handle OpenRouter limitation gracefully
+          if (vidError.message === "VIDEO_GEN_UNSUPPORTED_PROVIDER") {
+              console.warn("Video generation skipped due to OpenRouter provider");
+              setGameState(prev => ({
+                  ...prev,
+                  videoUrl: null, // Keep static image
+                  isLoading: false,
+                  loadingStage: 'TEXT-ONLY MODE (OPENROUTER)'
+              }));
+          } else {
+              throw vidError; // Re-throw real errors
+          }
+      }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Loop Error:", error);
+      
+      let statusMsg = 'SIGNAL LOST';
+      
+      // Extract meaningful message from potentially nested error object
+      const errBody = error.error || error;
+      const errMsg = error.message || errBody?.message || JSON.stringify(error);
+
+      // Handle Quota Errors Gracefully
+      if (errMsg.includes('429') || errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('resource_exhausted')) {
+          statusMsg = 'ERR: QUOTA EXCEEDED (WAITING)';
+      } else if (errMsg.includes('405')) {
+          statusMsg = 'ERR: MODEL INCOMPATIBLE (405)';
+      } else {
+          statusMsg = `ERR: ${errMsg.substring(0, 20).toUpperCase()}...`;
+      }
+
       setGameState(prev => ({ 
         ...prev, 
         isLoading: false, 
-        loadingStage: 'ERROR - RETRY' 
+        loadingStage: statusMsg 
       }));
-      alert("Transmission interrupted. Check API Key in System Tab.");
     }
   };
 
   const handleStart = () => {
     setIsStarted(true);
-    runLoop(null);
+    // If we already have a loaded tape, just resume playback/interaction state
+    // If we are starting fresh, run the loop
+    if (!gameState.currentBeat) {
+        runLoop(null);
+    }
   };
 
   const handleChoice = (choiceId: string) => {
@@ -157,9 +210,10 @@ const TVRoom: React.FC = () => {
       const imageBlob = base64ToBlob(currentFrameBase64);
       const saveState: TapeFileSchema = {
         meta: {
-          version: "1.0",
-          characterName: "Viewer Agent",
-          createdAt: new Date().toISOString()
+          version: "1.1",
+          characterName: (location.state?.tapeData as TapeFileSchema)?.meta?.characterName || "Viewer Agent",
+          createdAt: new Date().toISOString(),
+          visualStyle: settings.visualStyle // Save current style to tape
         },
         engineState: {
           history: gameState.history,
@@ -172,7 +226,7 @@ const TVRoom: React.FC = () => {
       const url = URL.createObjectURL(taggedBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `living_tv_save_${Date.now()}.png`;
+      a.download = `${saveState.meta.characterName.replace(/\s+/g, '_')}_${Date.now()}.png`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -202,10 +256,20 @@ const TVRoom: React.FC = () => {
         const { state: rawData, imgUrl } = await readTapeData(file);
         
         let loadedState;
+        let tapeMeta;
+
         if ('engineState' in rawData) {
-          loadedState = (rawData as TapeFileSchema).engineState;
+          const schema = rawData as TapeFileSchema;
+          loadedState = schema.engineState;
+          tapeMeta = schema.meta;
         } else {
           loadedState = rawData;
+        }
+
+        // Apply Tape Style if present
+        if (tapeMeta && tapeMeta.visualStyle && ANIMATION_STYLES[tapeMeta.visualStyle]) {
+            console.log(`[System] Dropped tape overrides style to: ${tapeMeta.visualStyle}`);
+            setSettings(prev => ({ ...prev, visualStyle: tapeMeta.visualStyle! }));
         }
 
         const res = await fetch(imgUrl);
@@ -233,6 +297,34 @@ const TVRoom: React.FC = () => {
     }
   };
 
+  const getStatusColor = () => {
+      if (gameState.loadingStage.startsWith('ERR')) return 'text-red-500 animate-pulse';
+      // If we are in a special mode (like OpenRouter Text-Only), show green
+      if (gameState.loadingStage.includes('MODE')) return 'text-green-400';
+      if (gameState.loadingStage === 'TAPE LOADED - READY') return 'text-green-500';
+      if (gameState.isLoading) return 'text-yellow-500';
+      return 'text-gray-500';
+  };
+
+  // Determine what text to show in the Status bar
+  const getStatusText = () => {
+      if (gameState.isLoading) return `STATUS: ${gameState.loadingStage}`;
+      
+      // If it's an error, show it
+      if (gameState.loadingStage.startsWith('ERR')) return gameState.loadingStage;
+      
+      // If it's a special mode message, show it
+      if (gameState.loadingStage.includes('MODE')) return `STATUS: ${gameState.loadingStage}`;
+      
+      // If it's a descriptive status (like TAPE LOADED), show it
+      if (gameState.loadingStage !== 'IDLE' && gameState.loadingStage !== 'PLAYBACK') {
+          return `STATUS: ${gameState.loadingStage}`;
+      }
+
+      // Default idle state
+      return 'STATUS: AWAITING INPUT';
+  };
+
   return (
     <div 
       onDragOver={onDragOver} 
@@ -244,10 +336,13 @@ const TVRoom: React.FC = () => {
         {/* Header / Status Bar */}
         <div className="w-full bg-gray-900 p-2 flex justify-between items-center text-xs text-gray-500 border-b border-gray-800 z-50 font-mono">
           <div className="flex gap-4 items-center">
-              <div className="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
+              <div className={`w-2 h-2 rounded-full ${gameState.loadingStage.startsWith('ERR') ? 'bg-red-600 animate-ping' : 'bg-red-600 animate-pulse'}`}></div>
               <span>CH: 03</span>
+              <span className="text-green-900">STYLE: {settings.visualStyle.replace('_', ' ').toUpperCase()}</span>
           </div>
-          <span>{gameState.isLoading ? `STATUS: ${gameState.loadingStage}` : 'STATUS: AWAITING INPUT'}</span>
+          <span className={getStatusColor()}>
+              {getStatusText()}
+          </span>
           <span>REC: {new Date().toLocaleTimeString()}</span>
         </div>
 

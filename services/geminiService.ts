@@ -2,6 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { StoryBeat } from "../types";
 import { SYSTEM_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS } from "../constants";
+import { getSettings } from "./storageService";
 
 // Helper to retrieve the API key string
 async function getApiKey(): Promise<string> {
@@ -44,10 +45,121 @@ async function getApiKey(): Promise<string> {
   throw new Error("No API Key found. Please enter one in the SYSTEM tab.");
 }
 
-// Helper to ensure we have a key before making requests
-async function getAuthenticatedClient(): Promise<GoogleGenAI> {
-  const apiKey = await getApiKey();
-  return new GoogleGenAI({ apiKey });
+// --- RETRY LOGIC ---
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, baseDelay = 5000): Promise<T> {
+  try {
+    return await fn();
+  } catch (e: any) {
+    // Inspect error object structure (Google GenAI can return nested error objects)
+    const errBody = e.error || e;
+    const message = e.message || errBody?.message || JSON.stringify(e);
+
+    // Check for Quota/Rate Limit errors
+    const isRateLimit = 
+      message.includes('429') || 
+      message.toLowerCase().includes('quota') || 
+      message.toLowerCase().includes('resource_exhausted') ||
+      e.status === 429 ||
+      e.code === 429 ||
+      errBody?.code === 429 ||
+      errBody?.status === 'RESOURCE_EXHAUSTED';
+
+    if (isRateLimit && retries > 0) {
+      console.warn(`[System] Rate limit hit. Cooling down for ${baseDelay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, baseDelay));
+      // Increase delay for next attempt (Exponential/Linear Backoff)
+      return withRetry(fn, retries - 1, baseDelay * 1.5);
+    }
+    throw e;
+  }
+}
+
+// --- OPENROUTER IMPLEMENTATION ---
+
+async function generateStoryBeatOpenRouter(
+    apiKey: string,
+    previousContext: string[],
+    userChoice: string | null,
+    lastFrameBase64: string | null,
+    modelId: string
+): Promise<StoryBeat> {
+    const prompt = userChoice
+    ? `The viewer chose: "${userChoice}". Continue the story.`
+    : `Start the first scene of a mysterious adventure involving a character finding a strange object.`;
+
+    const messages: any[] = [
+        {
+            role: "system",
+            content: SYSTEM_INSTRUCTION
+        }
+    ];
+
+    // Build User content array (Text + optional Image)
+    const userContent: any[] = [
+        { type: "text", text: `History: ${previousContext.slice(-3).join(' ')}\n\nTask: ${prompt}` }
+    ];
+
+    if (lastFrameBase64) {
+        userContent.push({
+            type: "image_url",
+            image_url: {
+                url: `data:image/png;base64,${lastFrameBase64}`
+            }
+        });
+    }
+
+    messages.push({ role: "user", content: userContent });
+
+    console.log(`[OpenRouter] Generating Story using model: ${modelId}`);
+
+    // NOTE: We purposely omit 'response_format' here. 
+    // Some providers (like DeepInfra/Nvidia) return 405 if 'response_format' is present at all.
+    // We rely on the robust JSON parser below to handle unstructured text.
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "HTTP-Referer": window.location.origin,
+            "X-Title": "Living TV Show",
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            model: modelId, 
+            messages: messages
+        })
+    });
+
+    if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`OpenRouter Error: ${response.status} - ${err}`);
+    }
+
+    const data = await response.json();
+    let text = data.choices[0]?.message?.content;
+
+    if (!text) throw new Error("OpenRouter returned empty content");
+
+    // Robust JSON Extraction
+    // 1. Try to find markdown JSON block
+    const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (markdownMatch) {
+        text = markdownMatch[1];
+    } else {
+        // 2. Fallback: Find first { and last }
+        const jsonStartIndex = text.indexOf('{');
+        const jsonEndIndex = text.lastIndexOf('}');
+        if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
+            text = text.substring(jsonStartIndex, jsonEndIndex + 1);
+        }
+    }
+
+    try {
+        return JSON.parse(text) as StoryBeat;
+    } catch (e) {
+        console.error("JSON Parse Error:", e);
+        console.log("Raw Text:", text);
+        throw new Error("Failed to parse story beat JSON from model response.");
+    }
 }
 
 /**
@@ -58,7 +170,22 @@ export const generateStoryBeat = async (
   userChoice: string | null,
   lastFrameBase64: string | null
 ): Promise<StoryBeat> => {
-  const ai = await getAuthenticatedClient();
+  const apiKey = await getApiKey();
+  const settings = await getSettings();
+
+  // Check for OpenRouter Key
+  if (apiKey.startsWith('sk-or-')) {
+      return withRetry(() => generateStoryBeatOpenRouter(
+          apiKey, 
+          previousContext, 
+          userChoice, 
+          lastFrameBase64,
+          settings.openRouterModel || 'google/gemini-2.0-flash-001'
+      ));
+  }
+
+  // Fallback to standard Google GenAI SDK
+  const ai = new GoogleGenAI({ apiKey });
 
   const prompt = userChoice
     ? `The viewer chose: "${userChoice}". Continue the story.`
@@ -76,7 +203,7 @@ export const generateStoryBeat = async (
     });
   }
 
-  const response = await ai.models.generateContent({
+  const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: { parts },
     config: {
@@ -102,7 +229,7 @@ export const generateStoryBeat = async (
         required: ["narrative", "visualPrompt", "choices"],
       },
     },
-  });
+  }));
 
   if (!response.text) {
     throw new Error("Failed to generate story beat.");
@@ -120,12 +247,61 @@ export const generateVideoClip = async (
   styleKey: string = 'claymation',
   modelKey: string = 'fast'
 ): Promise<string> => {
-  const ai = await getAuthenticatedClient();
-  
+  const apiKey = await getApiKey();
+  const settings = await getSettings();
   const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
-  const modelName = VIDEO_MODELS[modelKey as keyof typeof VIDEO_MODELS] || VIDEO_MODELS['fast'];
-  
   const fullPrompt = `${visualDescription}, ${stylePrompt}`;
+
+  // --- OPENROUTER VIDEO ATTEMPT ---
+  if (apiKey.startsWith('sk-or-')) {
+      console.log("[System] Attempting OpenRouter Video Generation...");
+      try {
+        // We attempt to call OpenRouter as if it's a standard generation endpoint.
+        // Note: If the user selected a model that only returns text, this will fail gracefully below.
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "HTTP-Referer": window.location.origin,
+                "X-Title": "Living TV Show",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: settings.openRouterModel || 'google/gemini-2.0-flash-001', 
+                messages: [
+                   { role: "user", content: `Generate a short video clip: ${fullPrompt}` }
+                ]
+                // Note: No response_format here either.
+            })
+        });
+
+        if (!response.ok) throw new Error("OpenRouter Video Request Failed");
+        
+        const data = await response.json();
+        const content = data.choices[0]?.message?.content;
+
+        // CHECK: Did we get a URL?
+        // Some models might return a URL in the content string
+        const urlMatch = content?.match(/https?:\/\/[^\s"']+\.mp4/);
+        if (urlMatch) {
+            return urlMatch[0];
+        }
+
+        // If we just got text, we can't use it as a video source.
+        console.warn("[OpenRouter] Model returned text, not a video URL. Falling back to Slideshow Mode.");
+        throw new Error("VIDEO_GEN_UNSUPPORTED_PROVIDER");
+
+      } catch (e: any) {
+          if (e.message === "VIDEO_GEN_UNSUPPORTED_PROVIDER") throw e;
+          console.error("OpenRouter Video Error:", e);
+          throw new Error("VIDEO_GEN_UNSUPPORTED_PROVIDER");
+      }
+  }
+
+  // --- GOOGLE VEO IMPLEMENTATION ---
+  
+  const ai = new GoogleGenAI({ apiKey });
+  const modelName = VIDEO_MODELS[modelKey as keyof typeof VIDEO_MODELS] || VIDEO_MODELS['fast'];
 
   console.log(`[Veo] Generating (${modelName}) with prompt:`, fullPrompt);
 
@@ -135,47 +311,50 @@ export const generateVideoClip = async (
     // Continuation mode: Use image-to-video (or text+image-to-video)
     operation = await ai.models.generateVideos({
       model: modelName,
-      prompt: fullPrompt,
+      prompt: fullPrompt, 
       image: {
         imageBytes: lastFrameBase64,
-        mimeType: "image/png",
+        mimeType: 'image/png',
       },
       config: {
         numberOfVideos: 1,
-        resolution: "720p", // Fast model supports 720p
-        aspectRatio: "16:9",
-      },
+        resolution: '720p',
+        aspectRatio: '16:9'
+      }
     });
   } else {
-    // Cold start: Text-to-video only
+    // Fresh start
     operation = await ai.models.generateVideos({
       model: modelName,
       prompt: fullPrompt,
       config: {
         numberOfVideos: 1,
-        resolution: "720p",
-        aspectRatio: "16:9",
-      },
+        resolution: '720p',
+        aspectRatio: '16:9'
+      }
     });
   }
 
   // Poll for completion
+  console.log("[Veo] Job started. Polling...", operation);
+  
+  // Safety timeout (3 minutes)
+  const startTime = Date.now();
+  const MAX_WAIT = 180000; 
+
   while (!operation.done) {
-    await new Promise((resolve) => setTimeout(resolve, 3000)); // Poll every 3s
-    operation = await ai.operations.getVideosOperation({ operation: operation });
-    console.log("Veo status:", operation.metadata);
+    if (Date.now() - startTime > MAX_WAIT) {
+        throw new Error("Video generation timed out.");
+    }
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5s
+    operation = await ai.operations.getVideosOperation({ operation });
   }
 
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-
   if (!videoUri) {
-    throw new Error("Video generation failed or returned no URI.");
+    throw new Error("Video generation finished but no URI found.");
   }
 
-  // Fetch the actual video bytes to create a blob URL for the <video> tag
-  const apiKey = await getApiKey();
-
-  const videoRes = await fetch(`${videoUri}&key=${apiKey}`);
-  const videoBlob = await videoRes.blob();
-  return URL.createObjectURL(videoBlob);
+  // Fetch actual bytes using the key (Veo API requirement for download link)
+  return `${videoUri}&key=${apiKey}`;
 };

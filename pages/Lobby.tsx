@@ -1,12 +1,14 @@
 
+
 import React, { useState, useEffect, DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
 import CRTContainer from '../components/CRTContainer';
 import { readTapeData } from '../utils/tapeUtils';
-import { TapeFileSchema, StoredTape, AppSettings } from '../types';
+import { TapeFileSchema, StoredTape, AppSettings, OpenRouterModel } from '../types';
 import { getLibrary, saveTapeToLibrary, deleteTapeFromLibrary, getSettings, saveSettings, DEFAULT_SETTINGS } from '../services/storageService';
-import { ANIMATION_STYLES, VIDEO_MODELS } from '../constants';
+import { ANIMATION_STYLES, VIDEO_MODELS, GET_KEY_URL } from '../constants';
+import { fetchOpenRouterModels } from '../services/openRouterService';
 
 // --- Helpers ---
 
@@ -78,6 +80,9 @@ const Lobby: React.FC = () => {
   // Data
   const [library, setLibrary] = useState<StoredTape[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [availableModels, setAvailableModels] = useState<OpenRouterModel[]>([]);
+  const [modelSearch, setModelSearch] = useState('');
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
   
   // UI State
   const [isDragging, setIsDragging] = useState(false);
@@ -117,6 +122,14 @@ const Lobby: React.FC = () => {
         // Check API key status if exists
         if (activeSettings.apiKey) {
             setApiStatus('idle'); 
+            // If OpenRouter, pre-fetch models
+            if (activeSettings.apiKey.startsWith('sk-or-')) {
+               loadOpenRouterModels();
+            }
+        } else {
+            // BYOK Flow: No key found? Send to System tab immediately.
+            setActiveTab('SYSTEM');
+            setError("⚠️ SETUP REQUIRED: PLEASE ENTER API KEY");
         }
       } catch (e) {
         console.error("Init failed", e);
@@ -130,9 +143,26 @@ const Lobby: React.FC = () => {
 
   // --- Settings Logic ---
 
+  const loadOpenRouterModels = async () => {
+    if (availableModels.length > 0) return; // Already loaded
+    setIsFetchingModels(true);
+    try {
+      const models = await fetchOpenRouterModels();
+      setAvailableModels(models);
+    } catch (e) {
+      console.error("Failed to load models", e);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
   const savePreferences = async (newSettings: AppSettings) => {
       setSettings(newSettings);
       await saveSettings(newSettings);
+      
+      if (newSettings.apiKey.startsWith('sk-or-') && availableModels.length === 0) {
+        loadOpenRouterModels();
+      }
   };
 
   const testApiConnection = async () => {
@@ -140,16 +170,32 @@ const Lobby: React.FC = () => {
 
     setApiStatus('testing');
     try {
-      const ai = new GoogleGenAI({ apiKey: settings.apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: 'Ping',
-      });
+      // Simple heuristic check for OpenRouter
+      if (settings.apiKey.startsWith('sk-or-')) {
+        const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
+            headers: { Authorization: `Bearer ${settings.apiKey}` }
+        });
+        if (res.ok) {
+            setApiStatus('success');
+            setError(null);
+            savePreferences(settings);
+            loadOpenRouterModels();
+        } else {
+            throw new Error("OpenRouter Key Invalid");
+        }
+      } else {
+        // Google Check
+        const ai = new GoogleGenAI({ apiKey: settings.apiKey });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: 'Ping',
+        });
 
-      if (response.text) {
-        setApiStatus('success');
-        setError(null);
-        savePreferences(settings); // Ensure save
+        if (response.text) {
+            setApiStatus('success');
+            setError(null);
+            savePreferences(settings); 
+        }
       }
     } catch (err: any) {
       console.error('API Test Failed:', err);
@@ -297,6 +343,12 @@ const Lobby: React.FC = () => {
     navigate('/tv');
   };
 
+  // Filter Models based on Search
+  const filteredModels = availableModels.filter(m => 
+      m.id.toLowerCase().includes(modelSearch.toLowerCase()) || 
+      m.name.toLowerCase().includes(modelSearch.toLowerCase())
+  );
+
   return (
     <div className="min-h-screen w-full bg-[#050505]" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <CRTContainer>
@@ -312,13 +364,14 @@ const Lobby: React.FC = () => {
             <div className="flex gap-2">
                 <button 
                     onClick={() => setActiveTab('RENTAL')}
-                    className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'RENTAL' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'}`}
+                    disabled={!settings.apiKey}
+                    className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'RENTAL' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'} disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                     Rental
                 </button>
                 <button 
                     onClick={() => setActiveTab('SYSTEM')}
-                    className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'SYSTEM' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'}`}
+                    className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'SYSTEM' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'} ${!settings.apiKey ? 'animate-pulse text-green-300 border-green-300' : ''}`}
                 >
                     System
                 </button>
@@ -371,7 +424,7 @@ const Lobby: React.FC = () => {
                     <div className="mb-8 border border-green-900 p-6 bg-black/50">
                         <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Authorization</h2>
                         <div className="flex flex-col gap-2">
-                            <label className="text-green-800 text-sm">GEMINI API KEY</label>
+                            <label className="text-green-800 text-sm">API KEY (GEMINI OR OPENROUTER)</label>
                             <div className="flex gap-2">
                                 <input 
                                     type="password" 
@@ -391,32 +444,93 @@ const Lobby: React.FC = () => {
                                     {apiStatus === 'testing' ? '...' : 'Verify'}
                                 </button>
                             </div>
-                            <p className="text-xs text-gray-600 mt-1">
-                                {apiStatus === 'success' && <span className="text-green-500">✓ Connection Established</span>}
-                                {apiStatus === 'error' && <span className="text-red-500">✗ Connection Failed</span>}
-                                {apiStatus === 'idle' && "Key is stored locally in browser memory."}
-                            </p>
+                            <div className="flex justify-between items-start mt-2">
+                                <p className="text-xs text-gray-600">
+                                    {apiStatus === 'success' && <span className="text-green-500">✓ Connection Established</span>}
+                                    {apiStatus === 'error' && <span className="text-red-500">✗ Connection Failed</span>}
+                                    {apiStatus === 'idle' && "Supports Google Gemini or OpenRouter (sk-or-...) keys."}
+                                </p>
+                                <a 
+                                    href={GET_KEY_URL} 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="text-green-700 text-xs hover:text-green-400 underline decoration-dotted"
+                                >
+                                    Get a Free API Key &rarr;
+                                </a>
+                            </div>
                         </div>
                     </div>
 
-                    {/* REMOTE ACCESS */}
-                    <div className="mb-8 border border-green-900 p-6 bg-black/50 relative overflow-hidden">
-                        <div className="absolute -right-4 -top-4 bg-green-900 text-black text-xs font-bold px-8 py-1 rotate-45">
-                           SHARE
+                    {/* OPENROUTER MODEL CONFIG */}
+                    {settings.apiKey.startsWith('sk-or-') && (
+                        <div className="mb-8 border border-green-900 p-6 bg-black/50">
+                            <div className="flex justify-between items-center mb-4 border-b border-green-900/50 pb-2">
+                              <h2 className="text-xl text-green-500 uppercase">OpenRouter Model</h2>
+                              <button 
+                                onClick={loadOpenRouterModels} 
+                                className="text-green-800 hover:text-green-500 text-xs uppercase flex items-center gap-1"
+                              >
+                                {isFetchingModels ? 'SYNCING...' : 'REFRESH LIST'}
+                              </button>
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                <div className="relative">
+                                  <input 
+                                      type="text" 
+                                      value={modelSearch}
+                                      onChange={(e) => setModelSearch(e.target.value)}
+                                      placeholder="Search models (e.g. 'gemini 3')..."
+                                      className="w-full bg-black border border-green-900 text-green-500 px-4 py-2 mb-2 focus:border-green-500 focus:outline-none font-mono text-sm"
+                                  />
+                                  <span className="absolute right-3 top-2 text-green-800 text-xs">
+                                      {filteredModels.length} FOUND
+                                  </span>
+                                </div>
+                                
+                                <div className="h-48 overflow-y-auto border border-green-900/50 bg-black/30 p-1 scrollbar-thin">
+                                    {filteredModels.map(model => (
+                                        <div 
+                                            key={model.id}
+                                            onClick={() => savePreferences({...settings, openRouterModel: model.id})}
+                                            className={`
+                                                cursor-pointer p-2 flex justify-between items-center border-b border-green-900/20 hover:bg-green-900/20 transition-colors
+                                                ${settings.openRouterModel === model.id ? 'bg-green-900/40 border-l-4 border-l-green-500' : ''}
+                                            `}
+                                        >
+                                            <div className="flex flex-col overflow-hidden">
+                                                <span className="text-green-400 font-bold text-sm truncate">{model.name}</span>
+                                                <span className="text-gray-600 text-[10px] truncate">{model.id}</span>
+                                            </div>
+                                            <div className="text-right flex flex-col shrink-0 ml-2">
+                                                <span className="text-gray-500 text-[10px]">
+                                                   {model.context_length ? Math.round(model.context_length/1000) + 'k' : '?'} CTX
+                                                </span>
+                                                {model.pricing && (
+                                                    <span className="text-green-800 text-[10px]">
+                                                        ${parseFloat(model.pricing.prompt) * 1000000}/M
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {filteredModels.length === 0 && !isFetchingModels && (
+                                        <div className="p-4 text-center text-gray-600 text-xs">NO MODELS FOUND</div>
+                                    )}
+                                    {isFetchingModels && (
+                                        <div className="p-4 text-center text-green-800 animate-pulse text-xs">DOWNLOADING REGISTRY...</div>
+                                    )}
+                                </div>
+                                
+                                <div className="flex justify-between items-center mt-2">
+                                    <p className="text-xs text-gray-600">
+                                        Selected: <span className="text-green-500 font-bold">{settings.openRouterModel}</span>
+                                    </p>
+                                </div>
+                            </div>
                         </div>
-                        <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Remote Access</h2>
-                        <p className="text-green-800 text-sm mb-4">
-                           Generate a "Magic Link" to share this app with your API credentials pre-loaded. 
-                           Anyone with this link can use your key.
-                        </p>
-                        <button 
-                           onClick={copyMagicLink}
-                           disabled={!settings.apiKey}
-                           className="w-full border border-dashed border-green-500 text-green-500 py-3 hover:bg-green-900/30 uppercase tracking-widest font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                           {copyStatus || (settings.apiKey ? "Copy Magic Link" : "Enter Key First")}
-                        </button>
-                    </div>
+                    )}
 
                     <div className="mb-8 border border-green-900 p-6 bg-black/50">
                         <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Production Settings</h2>
@@ -436,25 +550,47 @@ const Lobby: React.FC = () => {
                             </div>
 
                             <div className="flex flex-col gap-2">
-                                <label className="text-green-800 text-sm">GENERATION MODEL</label>
+                                <label className="text-green-800 text-sm">GENERATION MODEL (GOOGLE)</label>
                                 <select 
                                     value={settings.videoModel}
                                     onChange={(e) => savePreferences({...settings, videoModel: e.target.value})}
-                                    className="bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono uppercase"
+                                    disabled={settings.apiKey.startsWith('sk-or-')}
+                                    className="bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono uppercase disabled:opacity-50"
                                 >
                                     {Object.keys(VIDEO_MODELS).map(key => (
                                         <option key={key} value={key}>{key.toUpperCase()} {key === 'fast' ? '(Preview)' : '(Full Quality)'}</option>
                                     ))}
                                 </select>
                                 <p className="text-xs text-gray-600">
-                                    Fast (Preview) generates 720p quickly. Quality takes longer but provides better consistency.
+                                    Fast (Preview) generates 720p quickly. Quality takes longer.
+                                    {settings.apiKey.startsWith('sk-or-') && <br/>}
+                                    {settings.apiKey.startsWith('sk-or-') && <span className="text-yellow-600">Using OpenRouter? This setting is ignored in favor of the Model ID above.</span>}
                                 </p>
                             </div>
                         </div>
                     </div>
                     
+                    {/* REMOTE ACCESS */}
+                    <div className="mb-8 border border-green-900 p-6 bg-black/50 relative overflow-hidden">
+                        <div className="absolute -right-4 -top-4 bg-green-900 text-black text-xs font-bold px-8 py-1 rotate-45">
+                           SHARE
+                        </div>
+                        <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Remote Access</h2>
+                        <p className="text-green-800 text-sm mb-4">
+                           Generate a "Magic Link" to share this app with your API credentials pre-loaded. 
+                           Anyone with this link can use your key.
+                        </p>
+                        <button 
+                           onClick={copyMagicLink}
+                           disabled={!settings.apiKey}
+                           className="w-full border border-dashed border-green-500 text-green-500 py-3 hover:bg-green-900/30 uppercase tracking-widest font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                           {copyStatus || (settings.apiKey ? "Copy Magic Link" : "Enter Key First")}
+                        </button>
+                    </div>
+
                     <div className="text-center text-gray-600 text-xs">
-                        SYSTEM VERSION 1.1 • TAPE LOOP ENGINE
+                        SYSTEM VERSION 1.4 • TAPE LOOP ENGINE
                     </div>
                 </div>
             )}

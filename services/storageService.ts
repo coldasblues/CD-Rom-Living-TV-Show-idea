@@ -1,4 +1,5 @@
 
+
 import { get, set } from 'idb-keyval';
 import { StoredTape, AppSettings } from '../types';
 import { ANIMATION_STYLES, VIDEO_MODELS } from '../constants';
@@ -40,7 +41,8 @@ export const clearLibrary = async (): Promise<void> => {
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
   visualStyle: 'claymation',
-  videoModel: 'fast'
+  videoModel: 'fast',
+  openRouterModel: 'google/gemini-2.0-flash-001' // Default Fallback
 };
 
 export const getSettings = async (): Promise<AppSettings> => {

@@ -1,4 +1,5 @@
 
+
 export const SYSTEM_INSTRUCTION = `
 You are the Showrunner and Scriptwriter for "The Tape Loop", an infinite, surreal TV show engine.
 Your goal is to generate a coherent, slightly uncanny, or humorous narrative beat based on the user's choice.
@@ -17,6 +18,8 @@ You must return a valid JSON object with this schema:
 `;
 
 export const PLACEHOLDER_VIDEO = "https://media.istockphoto.com/id/1334253648/video/tv-static-noise-signal-glitch-effect-loop-background.mp4?s=mp4-640x640-is&k=20&c=1-YyX4J-fXfV29rG8sP_rT5HjQvWlqZq0Q0Q0Q0Q0=";
+
+export const GET_KEY_URL = "https://aistudio.google.com/app/apikey";
 
 export const ANIMATION_STYLES: Record<string, string> = {
   claymation: "in the style of stop-motion claymation, Aardman animation style, miniature scale, depth of field, cinematic lighting, 8k resolution",
