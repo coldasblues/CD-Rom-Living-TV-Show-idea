@@ -1,3 +1,5 @@
+
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { StoryBeat } from "../types";
 import { SYSTEM_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS } from "../constants";
@@ -103,10 +105,18 @@ async function generateStoryBeatOpenRouter(
         const messages: any[] = [
             { role: "system", content: SYSTEM_INSTRUCTION }
         ];
+        
+        // Smart Context: Persist the first history item if it's marked as Context
+        let historyText = "";
+        const contextEntry = previousContext.find(c => c.startsWith('SERIES CONTEXT:'));
+        if (contextEntry) {
+            historyText += `${contextEntry}\n\n`;
+        }
+        historyText += `RECENT LOGS:\n${previousContext.slice(-5).join('\n')}`;
 
         // Build User content array (Text + optional Image)
         const userContent: any[] = [
-            { type: "text", text: `History: ${previousContext.slice(-3).join(' ')}\n\nTask: ${prompt}` }
+            { type: "text", text: `History: ${historyText}\n\nTask: ${prompt}` }
         ];
 
         if (includeImage && lastFrameBase64) {
@@ -122,8 +132,6 @@ async function generateStoryBeatOpenRouter(
 
         console.log(`[OpenRouter] Generating Story using model: ${modelId} (Vision: ${includeImage})`);
 
-        // NOTE: We purposely omit 'response_format' here. 
-        // Some providers (like DeepInfra/Nvidia) return 405 if 'response_format' is present at all.
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -138,11 +146,9 @@ async function generateStoryBeatOpenRouter(
             })
         });
 
-        const responseText = await response.text(); // Read once to handle both error and success text
+        const responseText = await response.text();
 
         if (!response.ok) {
-            // Check for Image Compatibility Errors (404 No endpoints, or 400 Bad Request related to multimodal)
-            // OpenRouter often sends 404 with "No endpoints found that support image input"
             if ((response.status === 404 || response.status === 400) && 
                 (responseText.includes("support image input") || responseText.includes("multimodal"))) {
                 throw new Error("IMAGE_NOT_SUPPORTED");
@@ -155,12 +161,10 @@ async function generateStoryBeatOpenRouter(
 
     let data;
     try {
-        // Attempt 1: Try WITH image if available
         data = await makeRequest(!!lastFrameBase64);
     } catch (e: any) {
         if (e.message === "IMAGE_NOT_SUPPORTED" && lastFrameBase64) {
             console.warn("[OpenRouter] Selected model does not support vision. Falling back to Text-Only mode.");
-            // Attempt 2: Retry WITHOUT image
             data = await makeRequest(false);
         } else {
             throw e;
@@ -173,16 +177,13 @@ async function generateStoryBeatOpenRouter(
     }
 
     let text = data.choices[0].message?.content;
-
     if (!text) throw new Error("OpenRouter returned empty content");
 
     // Robust JSON Extraction
-    // 1. Try to find markdown JSON block
     const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
     if (markdownMatch) {
         text = markdownMatch[1];
     } else {
-        // 2. Fallback: Find first { and last }
         const jsonStartIndex = text.indexOf('{');
         const jsonEndIndex = text.lastIndexOf('}');
         if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
@@ -224,13 +225,50 @@ export const generateStoryBeat = async (
   // Fallback to standard Google GenAI SDK
   const ai = new GoogleGenAI({ apiKey });
 
-  const prompt = userChoice
-    ? `The viewer chose: "${userChoice}". Continue the story.`
-    : `Start the first scene of a mysterious adventure involving a character finding a strange object.`;
+  let fullPrompt = "";
+  let characterReinforcement = "";
 
-  const parts: any[] = [{ text: prompt }];
+  // Parse context to find character details for reinforcement
+  // We look for the "SERIES CONTEXT" block injected by Lobby.tsx
+  const seriesContext = previousContext.find(line => line.startsWith('SERIES CONTEXT:'));
+  
+  if (seriesContext) {
+      fullPrompt += `${seriesContext}\n\n`;
+      
+      // Extract details to force the AI to use them in visual prompts
+      const nameMatch = seriesContext.match(/Character: (.*)/);
+      const descMatch = seriesContext.match(/Personality\/Description: (.*)/);
+      
+      if (nameMatch) {
+          const name = nameMatch[1].trim();
+          // Limit description length to avoid token bloat, but keep enough for visuals
+          const desc = descMatch ? descMatch[1].substring(0, 300).trim() : "distinctive appearance";
+          
+          // CRITICAL: This instruction forces the LLM to unpack "Fran" into "A woman with..." in the visual prompt.
+          characterReinforcement = `VISUAL REQUIREMENT: In the 'visualPrompt' field, you MUST explicitly describe ${name}'s physical appearance (${desc}). Do not just use the name "${name}" because the video generator does not know them.`;
+      }
+  }
+  
+  // Recent History
+  const recentHistory = previousContext.slice(-5);
+  fullPrompt += `RECENT LOGS:\n${recentHistory.join('\n')}\n\n`;
+  
+  if (characterReinforcement) {
+      fullPrompt += `${characterReinforcement}\n\n`;
+  }
 
-  // If we have a previous frame, show it to the text model so it describes the *next* logical visual
+  // Task
+  if (userChoice) {
+      fullPrompt += `TASK: The viewer chose: "${userChoice}". Continue the story.`;
+  } else if (previousContext.length > 0) {
+      fullPrompt += `TASK: Continue the story naturally from the last moment.`;
+  } else {
+      fullPrompt += `TASK: Start the first scene of a mysterious adventure involving a character finding a strange object.`;
+  }
+
+  const parts: any[] = [{ text: fullPrompt }];
+
+  // If we have a previous frame, show it to the text model
   if (lastFrameBase64) {
     parts.unshift({
       inlineData: {
@@ -287,7 +325,8 @@ export const generateVideoClip = async (
   const apiKey = await getApiKey();
   const settings = await getSettings();
   const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
-  const fullPrompt = `${visualDescription}, ${stylePrompt}`;
+  // Inject motion keywords explicitly to prevent static videos
+  const fullPrompt = `${visualDescription}, dynamic motion, action shot, ${stylePrompt}`;
 
   // --- 1. FAL.AI PRIORITY OVERRIDE ---
   if (settings.falKey && settings.falKey.trim() !== '') {
@@ -304,8 +343,6 @@ export const generateVideoClip = async (
   if (apiKey.startsWith('sk-or-')) {
       console.log("[System] Attempting OpenRouter Video Generation...");
       try {
-        // We attempt to call OpenRouter as if it's a standard generation endpoint.
-        // Note: If the user selected a model that only returns text, this will fail gracefully below.
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -319,7 +356,6 @@ export const generateVideoClip = async (
                 messages: [
                    { role: "user", content: `Generate a short video clip: ${fullPrompt}` }
                 ]
-                // Note: No response_format here either.
             })
         });
 
@@ -327,22 +363,17 @@ export const generateVideoClip = async (
         
         const data = await response.json();
         
-        // SAFEGUARD FOR UNDEFINED CHOICES
         if (!data || !data.choices || !data.choices[0]) {
              console.warn("[OpenRouter] Model returned text but no choices/content. Falling back.", data);
              throw new Error("VIDEO_GEN_UNSUPPORTED_PROVIDER");
         }
         
         const content = data.choices[0].message?.content;
-
-        // CHECK: Did we get a URL?
-        // Some models might return a URL in the content string
         const urlMatch = content?.match(/https?:\/\/[^\s"']+\.mp4/);
         if (urlMatch) {
             return urlMatch[0];
         }
 
-        // If we just got text, we can't use it as a video source.
         console.warn("[OpenRouter] Model returned text, not a video URL. Falling back to Slideshow Mode.");
         throw new Error("VIDEO_GEN_UNSUPPORTED_PROVIDER");
 
@@ -362,9 +393,7 @@ export const generateVideoClip = async (
 
   let operation;
 
-  // Wrap the generation call in withRetry to handle 429s (Quota limits)
   if (lastFrameBase64) {
-    // Continuation mode: Use image-to-video (or text+image-to-video)
     operation = await withRetry(() => ai.models.generateVideos({
       model: modelName,
       prompt: fullPrompt, 
@@ -379,7 +408,6 @@ export const generateVideoClip = async (
       }
     }));
   } else {
-    // Fresh start
     operation = await withRetry(() => ai.models.generateVideos({
       model: modelName,
       prompt: fullPrompt,
@@ -391,10 +419,8 @@ export const generateVideoClip = async (
     }));
   }
 
-  // Poll for completion
   console.log("[Veo] Job started. Polling...", operation);
   
-  // Safety timeout (3 minutes)
   const startTime = Date.now();
   const MAX_WAIT = 180000; 
 
@@ -402,7 +428,6 @@ export const generateVideoClip = async (
     if (Date.now() - startTime > MAX_WAIT) {
         throw new Error("Video generation timed out.");
     }
-    // Poll every 5s (wrapped in retry for stability)
     await new Promise(resolve => setTimeout(resolve, 5000)); 
     operation = await withRetry(() => ai.operations.getVideosOperation({ operation }));
   }
@@ -412,6 +437,5 @@ export const generateVideoClip = async (
     throw new Error("Video generation finished but no URI found.");
   }
 
-  // Fetch actual bytes using the key (Veo API requirement for download link)
   return `${videoUri}&key=${apiKey}`;
 };

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -67,6 +68,40 @@ const generatePlaceholderImage = (text: string): string => {
     ctx.strokeRect(0, 0, 480, 640);
   }
   return canvas.toDataURL('image/png').split(',')[1];
+};
+
+// Helper to normalize generic card JSON into our Schema
+const normalizeCardData = (json: any): TapeFileSchema => {
+    // Supports Standard Tavern/V2 Card JSON structure
+    const charName = json.data?.name || json.character?.name || json.name || "Unknown";
+    
+    // Extract rich context
+    const scenario = json.data?.scenario || json.scenario || json.character?.scenario || "A mysterious sequence of events.";
+    const personality = json.data?.description || json.personality || json.description || json.character?.description || "Unknown entity.";
+    const firstMes = json.data?.first_mes || json.first_mes || json.initial_prompt || `The story of ${charName} begins.`;
+
+    // Construct a 'Context Zero' entry.
+    // This specific format allows us to detect it later and prepend it to prompts.
+    const contextEntry = `SERIES CONTEXT:\nCharacter: ${charName}\nPersonality/Description: ${personality}\nScenario/Theme: ${scenario}`;
+    
+    return {
+        meta: { version: "1.0", characterName: charName, createdAt: new Date().toISOString() },
+        engineState: {
+            // Pushing context first, then the actual start message
+            history: [contextEntry, firstMes], 
+            currentBeat: {
+                narrative: firstMes,
+                visualPrompt: `A cinematic shot of ${charName} in this setting: ${scenario}. ${personality}`,
+                choices: [
+                    { id: "1", text: "Look around" },
+                    { id: "2", text: "Move forward" },
+                    { id: "3", text: "Check inventory" },
+                    { id: "4", text: "Wait" }
+                ]
+            },
+            loadingStage: "CARD IMPORT"
+        }
+    };
 };
 
 const Lobby: React.FC = () => {
@@ -249,50 +284,35 @@ const Lobby: React.FC = () => {
         if (file.name.toLowerCase().endsWith('.json') || file.type === 'application/json') {
             const text = await file.text();
             const json = JSON.parse(text);
-            
-            const charName = json.character?.name || json.name || "Unknown";
-            const initialNarrative = json.initial_prompt || json.first_mes || json.description || `The story of ${charName} begins.`;
-            
-            let visualDetails = "";
-            if (json.character?.visual_description) visualDetails += `Character: ${json.character.visual_description}. `;
-            if (json.scene?.location) visualDetails += `Location: ${json.scene.location}. `;
-            
-            const visualPrompt = visualDetails || `A stop-motion scene featuring ${charName}.`;
-
-            normalizedData = {
-                meta: { version: "1.0", characterName: charName, createdAt: new Date().toISOString() },
-                engineState: {
-                    history: [initialNarrative],
-                    currentBeat: {
-                        narrative: initialNarrative,
-                        visualPrompt: visualPrompt,
-                        choices: [
-                            { id: "1", text: "Explore" },
-                            { id: "2", text: "Observe" },
-                            { id: "3", text: "Interact" },
-                            { id: "4", text: "Wait" }
-                        ]
-                    },
-                    loadingStage: "JSON IMPORT"
-                }
-            };
-            base64Image = generatePlaceholderImage(charName);
+            normalizedData = normalizeCardData(json);
+            base64Image = generatePlaceholderImage(normalizedData.meta.characterName);
         } else {
+            // Handle PNG
             try {
               const { state: rawData } = await readTapeData(file);
-              normalizedData = 'engineState' in rawData ? rawData as TapeFileSchema : {
-                  meta: { version: "0.0", characterName: "Unknown" },
-                  engineState: rawData
-              };
+              
+              if ('engineState' in rawData) {
+                  // It's a native Living TV Tape
+                  normalizedData = rawData as TapeFileSchema;
+              } else {
+                  // It's a generic Character Card (Tavern/V2)
+                  normalizedData = normalizeCardData(rawData);
+              }
+              
               base64Image = await blobToBase64(file);
             } catch (err: any) {
               if (err.message === "No Tape Data found on this image.") {
+                // It's just a raw PNG. Use filename as name, empty history.
                 const charName = file.name.replace(/\.[^/.]+$/, "").replace(/-TapeCard$/i, "");
                 base64Image = await blobToBase64(file);
+                
+                // Even for raw images, we want to start with some context so prompts don't hallucinate.
+                const rawContext = `SERIES CONTEXT:\nCharacter: ${charName}\nNote: Imported from raw image file.`;
+                
                 normalizedData = {
                   meta: { version: "1.0", characterName: charName, createdAt: new Date().toISOString() },
                   engineState: {
-                    history: [],
+                    history: [rawContext],
                     currentBeat: {
                       narrative: `The tape labeled "${charName}" is loaded.`,
                       visualPrompt: `A cinematic shot of ${charName}, highly detailed stop-motion animation.`,
@@ -622,7 +642,7 @@ const Lobby: React.FC = () => {
                     </div>
 
                     <div className="text-center text-gray-600 text-xs">
-                        SYSTEM VERSION 1.4 • TAPE LOOP ENGINE
+                        SYSTEM VERSION 1.5 • TAPE LOOP ENGINE
                     </div>
                 </div>
             )}

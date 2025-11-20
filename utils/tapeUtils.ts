@@ -116,6 +116,7 @@ export const createTapeBlob = async (imageBlob: Blob, stateData: any): Promise<B
 
 /**
  * Reads a PNG file and extracts the hidden stateData.
+ * Supports both 'LIVING_TV_DATA' (Native) and 'chara' (Tavern/V2 Cards).
  */
 export const readTapeData = async (file: File): Promise<{ state: any; imgUrl: string }> => {
   const arrayBuffer = await file.arrayBuffer();
@@ -136,7 +137,7 @@ export const readTapeData = async (file: File): Promise<{ state: any; imgUrl: st
 
     if (type === "tEXt") {
       const dataStart = pos + 8;
-      // Check keyword
+      // Find null separator
       let nullByte = -1;
       for(let k=0; k<len; k++) {
           if (uint8[dataStart + k] === 0) {
@@ -147,6 +148,8 @@ export const readTapeData = async (file: File): Promise<{ state: any; imgUrl: st
 
       if (nullByte !== -1) {
           const keyword = bytesToText(uint8.slice(dataStart, dataStart + nullByte));
+          
+          // 1. Native App Data
           if (keyword === KEYWORD) {
               const textData = bytesToText(uint8.slice(dataStart + nullByte + 1, dataStart + len));
               try {
@@ -155,8 +158,22 @@ export const readTapeData = async (file: File): Promise<{ state: any; imgUrl: st
                   console.error("Failed to parse tape data", e);
               }
           }
+          // 2. Tavern / Character Card V2 Data (Base64 encoded inside chunk)
+          else if (keyword === 'chara') {
+              const textData = bytesToText(uint8.slice(dataStart + nullByte + 1, dataStart + len));
+              try {
+                  // Tavern cards use base64 encoding for the JSON content
+                  const decoded = atob(textData);
+                  foundData = JSON.parse(decoded);
+                  console.log("Found Tavern Card Data:", foundData);
+              } catch(e) {
+                  console.error("Failed to parse tavern card data", e);
+              }
+          }
       }
     }
+
+    if (foundData) break; // Stop if we found something
 
     if (type === "IEND") break;
     pos += 8 + len + 4;

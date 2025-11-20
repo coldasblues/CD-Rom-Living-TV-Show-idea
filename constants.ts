@@ -7,7 +7,7 @@ Your goal is to generate a coherent, slightly uncanny, or humorous narrative bea
 You must return a valid JSON object with this schema:
 {
   "narrative": "A 1-2 sentence description of what is happening right now.",
-  "visualPrompt": "A highly detailed visual description of the scene for a video generator. Focus on the action, characters, and setting. Do not include specific art style keywords (like 'claymation' or 'pixel art') unless they are intrinsic to the object itself, as the rendering style is applied globally.",
+  "visualPrompt": "A highly detailed visual description of the scene for a video generator. CRITICAL: You MUST include the physical description of the Main Character in every single prompt. Do not just say their name. Example: 'A claymation figure of a woman with red hair and a green jacket walking...'. Describe dynamic MOTION and ACTION. Do not describe static scenes. Use verbs like 'running', 'fighting', 'morphing', 'zooming', 'panning'.",
   "choices": [
     { "id": "1", "text": "Short action 1" },
     { "id": "2", "text": "Short action 2" },
@@ -22,12 +22,12 @@ export const PLACEHOLDER_VIDEO = "https://media.istockphoto.com/id/1334253648/vi
 export const GET_KEY_URL = "https://aistudio.google.com/app/apikey";
 
 export const ANIMATION_STYLES: Record<string, string> = {
-  claymation: "in the style of stop-motion claymation, Aardman animation style, miniature scale, depth of field, cinematic lighting, 8k resolution",
-  vintage_anime: "in the style of 1990s anime, cel shaded, hand drawn, high contrast, retro aesthetic, grain",
-  pixel_art: "pixel art style, 16-bit graphics, SNES aesthetic, vibrant colors, dithered shading",
-  vhs_horror: "found footage style, vhs glitch effect, photorealistic, dark atmosphere, grainy texture, low fidelity, analog horror",
-  cinematic_3d: "unreal engine 5 render, hyper-realistic, ray tracing, 8k, cinematic lighting, highly detailed textures",
-  noir: "black and white film noir style, high contrast, dramatic shadows, film grain, 1940s cinema look"
+  claymation: "in the style of stop-motion claymation, Aardman animation style, miniature scale, depth of field, cinematic lighting, 8k resolution, fluid motion, dynamic action",
+  vintage_anime: "in the style of 1990s anime, cel shaded, hand drawn, high contrast, retro aesthetic, grain, dynamic camera angles, high motion",
+  pixel_art: "pixel art style, 16-bit graphics, SNES aesthetic, vibrant colors, dithered shading, active animation",
+  vhs_horror: "found footage style, vhs glitch effect, photorealistic, dark atmosphere, grainy texture, low fidelity, analog horror, shaky cam, movement",
+  cinematic_3d: "unreal engine 5 render, hyper-realistic, ray tracing, 8k, cinematic lighting, highly detailed textures, motion blur, action shot",
+  noir: "black and white film noir style, high contrast, dramatic shadows, film grain, 1940s cinema look, atmospheric motion, smoke and fog movement"
 };
 
 export const VIDEO_MODELS = {

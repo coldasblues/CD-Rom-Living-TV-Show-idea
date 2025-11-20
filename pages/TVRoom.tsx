@@ -54,7 +54,11 @@ const TVRoom: React.FC = () => {
     return INITIAL_STATE;
   });
 
-  const [isStarted, setIsStarted] = useState(false);
+  // Auto-start if tape data is present (Skip "Resume" click)
+  const [isStarted, setIsStarted] = useState(() => {
+      return !!(location.state && location.state.tapeData);
+  });
+  
   const [isDragging, setIsDragging] = useState(false);
 
   // Load Settings & Start check
@@ -403,7 +407,7 @@ const TVRoom: React.FC = () => {
                   onClick={handleStart}
                   className="bg-green-700 hover:bg-green-600 text-black font-bold py-4 px-8 rounded text-2xl tracking-widest shadow-[0_0_20px_rgba(0,255,0,0.5)] animate-pulse pointer-events-auto border-2 border-green-500"
                 >
-                  {gameState.lastFrameBase64 ? 'RESUME TAPE' : 'START PROGRAM'}
+                  {gameState.lastFrameBase64 ? 'PLAY TAPE' : 'START PROGRAM'}
                 </button>
                 <p className="mt-4 text-green-500/60 text-sm uppercase tracking-widest font-mono">or drop tape card</p>
              </div>
