@@ -1,5 +1,7 @@
 
 
+
+
 import { get, set } from 'idb-keyval';
 import { StoredTape, AppSettings } from '../types';
 import { ANIMATION_STYLES, VIDEO_MODELS } from '../constants';
@@ -40,6 +42,8 @@ export const clearLibrary = async (): Promise<void> => {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
+  falKey: '',
+  falModel: 'fal-ai/minimax/video-01',
   visualStyle: 'claymation',
   videoModel: 'fast',
   openRouterModel: 'google/gemini-2.0-flash-001' // Default Fallback

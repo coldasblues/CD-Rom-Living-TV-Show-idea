@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Choice } from '../types';
 
@@ -8,9 +7,10 @@ interface Props {
   onEject: () => void;
   onHome: () => void;
   disabled: boolean;
+  isLoading: boolean;
 }
 
-const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, onHome, disabled }) => {
+const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, onHome, disabled, isLoading }) => {
   return (
     <div className="w-full bg-[#0f0f0f] flex flex-col">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-6 pb-2 w-full">
@@ -43,7 +43,14 @@ const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, onHome, dis
         
         {choices.length === 0 && (
           <div className="col-span-2 flex items-center justify-center h-24 border-2 border-dashed border-gray-800 text-gray-700">
-            WAITING FOR TAPE...
+            {isLoading ? (
+                <span className="animate-pulse text-green-800 tracking-widest flex items-center gap-2">
+                   <span className="w-2 h-2 bg-green-800 rounded-full animate-ping"></span>
+                   TUNING FREQUENCY... SIGNAL ACQUISITION IN PROGRESS
+                </span>
+            ) : (
+                <span>WAITING FOR TAPE...</span>
+            )}
           </div>
         )}
       </div>
@@ -53,7 +60,7 @@ const ControlPanel: React.FC<Props> = ({ choices, onChoose, onEject, onHome, dis
          <button
              onClick={onHome}
              className="text-gray-600 text-xs hover:text-green-500 uppercase tracking-[0.2em] flex items-center gap-2 disabled:opacity-50"
-             disabled={disabled && choices.length === 0} 
+             disabled={disabled && choices.length === 0 && !isLoading} 
          >
             &lt; RETURN TO LOBBY
          </button>

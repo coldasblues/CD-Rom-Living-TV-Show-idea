@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -7,7 +5,7 @@ import CRTContainer from '../components/CRTContainer';
 import { readTapeData } from '../utils/tapeUtils';
 import { TapeFileSchema, StoredTape, AppSettings, OpenRouterModel } from '../types';
 import { getLibrary, saveTapeToLibrary, deleteTapeFromLibrary, getSettings, saveSettings, DEFAULT_SETTINGS } from '../services/storageService';
-import { ANIMATION_STYLES, VIDEO_MODELS, GET_KEY_URL } from '../constants';
+import { ANIMATION_STYLES, VIDEO_MODELS, GET_KEY_URL, FAL_MODELS } from '../constants';
 import { fetchOpenRouterModels } from '../services/openRouterService';
 
 // --- Helpers ---
@@ -424,6 +422,7 @@ const Lobby: React.FC = () => {
                     <div className="mb-8 border border-green-900 p-6 bg-black/50">
                         <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Authorization</h2>
                         <div className="flex flex-col gap-2">
+                            {/* PRIMARY API KEY */}
                             <label className="text-green-800 text-sm">API KEY (GEMINI OR OPENROUTER)</label>
                             <div className="flex gap-2">
                                 <input 
@@ -444,7 +443,40 @@ const Lobby: React.FC = () => {
                                     {apiStatus === 'testing' ? '...' : 'Verify'}
                                 </button>
                             </div>
-                            <div className="flex justify-between items-start mt-2">
+                            
+                            {/* FAL AI KEY */}
+                            <label className="text-green-800 text-sm mt-4">FAL.AI KEY (OPTIONAL)</label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="password" 
+                                    value={settings.falKey || ''}
+                                    onChange={(e) => {
+                                        setSettings({...settings, falKey: e.target.value});
+                                    }}
+                                    placeholder="Key..."
+                                    className="flex-grow bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono"
+                                />
+                            </div>
+                            <p className="text-xs text-gray-600">Enter Fal key to use Minimax/Luma models.</p>
+
+                            {/* FAL MODEL SELECTOR - NEW ADDITION */}
+                            {settings.falKey && (
+                                <div className="mt-4 pt-4 border-t border-green-900/30">
+                                    <label className="text-green-800 text-sm">VIDEO MODEL (CHANNEL)</label>
+                                    <select 
+                                        value={settings.falModel}
+                                        onChange={(e) => savePreferences({...settings, falModel: e.target.value})}
+                                        className="w-full mt-2 bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono uppercase"
+                                    >
+                                        {Object.entries(FAL_MODELS).map(([name, id]) => (
+                                            <option key={id} value={id}>{name}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-gray-600 mt-1">Select the underlying video generation engine.</p>
+                                </div>
+                            )}
+
+                            <div className="flex justify-between items-start mt-4">
                                 <p className="text-xs text-gray-600">
                                     {apiStatus === 'success' && <span className="text-green-500">✓ Connection Established</span>}
                                     {apiStatus === 'error' && <span className="text-red-500">✗ Connection Failed</span>}

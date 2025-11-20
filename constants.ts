@@ -34,3 +34,10 @@ export const VIDEO_MODELS = {
   fast: 'veo-3.1-fast-generate-preview',
   quality: 'veo-3.1-generate-preview' // Note: Slower
 };
+
+export const FAL_MODELS: Record<string, string> = {
+  'Minimax (Balanced)': 'fal-ai/minimax/video-01',
+  'Luma Dream Machine (Cinematic)': 'fal-ai/luma-dream-machine',
+  'Kling 1.6 (High Quality)': 'fal-ai/kling-video/v1.6/standard/image-to-video',
+  'Fast SVD (Glitchy/Cheap)': 'fal-ai/fast-svd/text-to-video'
+};

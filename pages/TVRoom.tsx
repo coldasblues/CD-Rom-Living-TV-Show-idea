@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, DragEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CRTContainer from '../components/CRTContainer';
@@ -9,7 +8,7 @@ import { GameState, StoryBeat, TapeFileSchema, AppSettings } from '../types';
 import { generateStoryBeat, generateVideoClip } from '../services/geminiService';
 import { createTapeBlob, readTapeData } from '../utils/tapeUtils';
 import { getSettings, DEFAULT_SETTINGS } from '../services/storageService';
-import { ANIMATION_STYLES } from '../constants';
+import { ANIMATION_STYLES, PLACEHOLDER_VIDEO } from '../constants';
 
 const INITIAL_STATE: GameState = {
   videoUrl: null,
@@ -36,6 +35,7 @@ const TVRoom: React.FC = () => {
   const tapeDeckRef = useRef<TapeDeckHandle>(null);
   
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [showDebug, setShowDebug] = useState(false);
 
   // Initialize State
   const [gameState, setGameState] = useState<GameState>(() => {
@@ -78,10 +78,6 @@ const TVRoom: React.FC = () => {
       };
       
       init();
-
-      if (gameState.currentBeat && gameState.lastFrameBase64) {
-          // Allow user to manually start via button to avoid autoplay policy issues
-      }
   }, []);
 
   const backToLobby = () => {
@@ -92,11 +88,9 @@ const TVRoom: React.FC = () => {
     if (gameState.isLoading) return;
 
     try {
-      // Important: Clear current video to force freeze-frame display
-      // This creates the visual bridge between segments
-      setGameState(prev => ({ ...prev, videoUrl: null }));
-
       let capturedFrame = gameState.lastFrameBase64;
+      
+      // Capture the frame BEFORE we switch to static
       if (choiceText && tapeDeckRef.current) {
          const frame = tapeDeckRef.current.captureFrame();
          if (frame) {
@@ -104,14 +98,18 @@ const TVRoom: React.FC = () => {
          }
       }
 
+      // Start Loading: Show Static, Hide old beat
+      // Setting videoUrl to null triggers effectiveVideoSrc to use PLACEHOLDER_VIDEO
       setGameState(prev => ({ 
         ...prev, 
         isLoading: true, 
+        videoUrl: null, 
         lastFrameBase64: capturedFrame,
         loadingStage: 'WRITING SCRIPT...' 
       }));
 
-      const beat: StoryBeat = await generateStoryBeat(
+      // 1. Generate Text
+      const nextBeat: StoryBeat = await generateStoryBeat(
         gameState.history,
         choiceText,
         capturedFrame
@@ -119,39 +117,40 @@ const TVRoom: React.FC = () => {
 
       setGameState(prev => ({ 
         ...prev, 
-        currentBeat: beat,
+        // NOTE: We do NOT update currentBeat yet to prevent spoilers
         loadingStage: `FILMING SCENE (${settings.visualStyle.toUpperCase()})...`,
-        history: [...prev.history, beat.narrative]
       }));
 
+      let newVideoUrl: string | null = null;
+      let status = 'PLAYBACK';
+
+      // 2. Generate Video
       try {
-          const videoUrl = await generateVideoClip(
-              beat.visualPrompt, 
+          newVideoUrl = await generateVideoClip(
+              nextBeat.visualPrompt, 
               capturedFrame, 
               settings.visualStyle, 
               settings.videoModel
           );
-
-          setGameState(prev => ({
-            ...prev,
-            videoUrl,
-            isLoading: false,
-            loadingStage: 'PLAYBACK'
-          }));
       } catch (vidError: any) {
           // Handle OpenRouter limitation gracefully
           if (vidError.message === "VIDEO_GEN_UNSUPPORTED_PROVIDER") {
               console.warn("Video generation skipped due to OpenRouter provider");
-              setGameState(prev => ({
-                  ...prev,
-                  videoUrl: null, // Keep static image
-                  isLoading: false,
-                  loadingStage: 'TEXT-ONLY MODE (OPENROUTER)'
-              }));
+              status = 'TEXT-ONLY MODE (OPENROUTER)';
           } else {
               throw vidError; // Re-throw real errors
           }
       }
+
+      // 3. Reveal Everything (Text + Video) at once
+      setGameState(prev => ({
+        ...prev,
+        currentBeat: nextBeat, // Now safe to show narrative
+        videoUrl: newVideoUrl,
+        isLoading: false,
+        loadingStage: status,
+        history: [...prev.history, nextBeat.narrative]
+      }));
 
     } catch (error: any) {
       console.error("Loop Error:", error);
@@ -197,7 +196,8 @@ const TVRoom: React.FC = () => {
 
   const handleEject = async () => {
     let currentFrameBase64 = tapeDeckRef.current?.captureFrame();
-    if (!currentFrameBase64) {
+    // If capturing from static or loading, fallback to last known good frame
+    if (gameState.isLoading || !currentFrameBase64) {
       currentFrameBase64 = gameState.lastFrameBase64;
     }
 
@@ -213,7 +213,7 @@ const TVRoom: React.FC = () => {
           version: "1.1",
           characterName: (location.state?.tapeData as TapeFileSchema)?.meta?.characterName || "Viewer Agent",
           createdAt: new Date().toISOString(),
-          visualStyle: settings.visualStyle // Save current style to tape
+          visualStyle: settings.visualStyle
         },
         engineState: {
           history: gameState.history,
@@ -299,31 +299,31 @@ const TVRoom: React.FC = () => {
 
   const getStatusColor = () => {
       if (gameState.loadingStage.startsWith('ERR')) return 'text-red-500 animate-pulse';
-      // If we are in a special mode (like OpenRouter Text-Only), show green
       if (gameState.loadingStage.includes('MODE')) return 'text-green-400';
       if (gameState.loadingStage === 'TAPE LOADED - READY') return 'text-green-500';
       if (gameState.isLoading) return 'text-yellow-500';
       return 'text-gray-500';
   };
 
-  // Determine what text to show in the Status bar
   const getStatusText = () => {
       if (gameState.isLoading) return `STATUS: ${gameState.loadingStage}`;
-      
-      // If it's an error, show it
       if (gameState.loadingStage.startsWith('ERR')) return gameState.loadingStage;
-      
-      // If it's a special mode message, show it
       if (gameState.loadingStage.includes('MODE')) return `STATUS: ${gameState.loadingStage}`;
-      
-      // If it's a descriptive status (like TAPE LOADED), show it
       if (gameState.loadingStage !== 'IDLE' && gameState.loadingStage !== 'PLAYBACK') {
           return `STATUS: ${gameState.loadingStage}`;
       }
-
-      // Default idle state
       return 'STATUS: AWAITING INPUT';
   };
+
+  // Determine effective video source (Content vs Static)
+  const effectiveVideoSrc = gameState.isLoading ? PLACEHOLDER_VIDEO : gameState.videoUrl;
+  const effectiveLoop = gameState.isLoading; 
+  
+  // Hide narrative/choices during loading to prevent spoilers
+  // We show a placeholder message instead
+  const displayedNarrative = gameState.isLoading 
+      ? "TRANSMISSION INTERRUPTED... TUNING TO NEW FREQUENCY..." 
+      : gameState.currentBeat?.narrative;
 
   return (
     <div 
@@ -337,7 +337,7 @@ const TVRoom: React.FC = () => {
         <div className="w-full bg-gray-900 p-2 flex justify-between items-center text-xs text-gray-500 border-b border-gray-800 z-50 font-mono">
           <div className="flex gap-4 items-center">
               <div className={`w-2 h-2 rounded-full ${gameState.loadingStage.startsWith('ERR') ? 'bg-red-600 animate-ping' : 'bg-red-600 animate-pulse'}`}></div>
-              <span>CH: 03</span>
+              <button onClick={() => setShowDebug(!showDebug)} className="hover:text-green-400 hover:underline cursor-pointer">CH: 03</button>
               <span className="text-green-900">STYLE: {settings.visualStyle.replace('_', ' ').toUpperCase()}</span>
           </div>
           <span className={getStatusColor()}>
@@ -349,17 +349,47 @@ const TVRoom: React.FC = () => {
         {/* Video Area */}
         <TapeDeck 
           ref={tapeDeckRef}
-          videoSrc={gameState.videoUrl}
+          videoSrc={effectiveVideoSrc}
           staticImageSrc={gameState.lastFrameBase64 ? `data:image/png;base64,${gameState.lastFrameBase64}` : null}
           isProcessing={gameState.isLoading}
           onEnded={() => {}}
+          loop={effectiveLoop}
         />
 
         {/* Narrative Text */}
         <NarrativeLog 
-          text={gameState.currentBeat?.narrative} 
+          text={displayedNarrative} 
           stage={gameState.loadingStage}
         />
+
+        {/* Debug Panel Overlay */}
+        {showDebug && (
+           <div className="absolute top-10 left-4 right-4 bg-black/90 border border-green-500 p-4 font-mono text-xs text-green-500 z-50 max-h-[80vh] overflow-auto shadow-[0_0_50px_rgba(0,255,0,0.2)]">
+              <div className="flex justify-between border-b border-green-900 pb-2 mb-2">
+                 <strong>DEBUG CONSOLE</strong>
+                 <button onClick={() => setShowDebug(false)} className="text-red-500 hover:text-red-400">[CLOSE]</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div>
+                    <h4 className="text-gray-500 mb-1">CURRENT BEAT (JSON)</h4>
+                    <pre className="whitespace-pre-wrap break-words bg-[#0a0a0a] p-2 border border-gray-800">{JSON.stringify(gameState.currentBeat, null, 2)}</pre>
+                 </div>
+                 <div>
+                    <h4 className="text-gray-500 mb-1">ENGINE STATE</h4>
+                    <div className="bg-[#0a0a0a] p-2 border border-gray-800 space-y-1">
+                      <p>Loading: <span className={gameState.isLoading ? "text-yellow-500" : "text-gray-500"}>{String(gameState.isLoading)}</span></p>
+                      <p>Stage: {gameState.loadingStage}</p>
+                      <p>Video URL: <span className="break-all">{gameState.videoUrl || 'NULL'}</span></p>
+                      <p>History Length: {gameState.history.length}</p>
+                    </div>
+                    <h4 className="text-gray-500 mt-4 mb-1">LAST CAPTURED FRAME</h4>
+                    {gameState.lastFrameBase64 && (
+                       <img src={`data:image/png;base64,${gameState.lastFrameBase64}`} className="w-32 border border-gray-700"/>
+                    )}
+                 </div>
+              </div>
+           </div>
+        )}
 
         {/* Controls */}
         <div className="flex-grow bg-[#111] flex flex-col justify-end relative">
@@ -382,11 +412,13 @@ const TVRoom: React.FC = () => {
           )}
           
           <ControlPanel 
-            choices={gameState.currentBeat?.choices || []}
+            // Pass empty choices while loading so the panel shows "TUNING..." state
+            choices={gameState.isLoading ? [] : (gameState.currentBeat?.choices || [])}
             onChoose={handleChoice}
             onEject={handleEject}
             onHome={backToLobby}
             disabled={gameState.isLoading || !isStarted}
+            isLoading={gameState.isLoading}
           />
         </div>
       </CRTContainer>

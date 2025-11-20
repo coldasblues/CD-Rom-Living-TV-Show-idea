@@ -1,5 +1,6 @@
 
 
+
 export interface Choice {
   id: string;
   text: string;
@@ -45,6 +46,8 @@ export interface StoredTape {
 
 export interface AppSettings {
   apiKey: string;
+  falKey?: string; // Optional key for Fal.ai
+  falModel: string; // Selected Fal model endpoint
   visualStyle: string; // Key from ANIMATION_STYLES
   videoModel: string;  // Key from VIDEO_MODELS
   openRouterModel: string; // Custom model ID for OpenRouter

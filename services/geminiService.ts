@@ -1,8 +1,8 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { StoryBeat } from "../types";
 import { SYSTEM_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS } from "../constants";
 import { getSettings } from "./storageService";
+import { generateFalClip } from "./falService";
 
 // Helper to retrieve the API key string
 async function getApiKey(): Promise<string> {
@@ -46,30 +46,41 @@ async function getApiKey(): Promise<string> {
 }
 
 // --- RETRY LOGIC ---
-async function withRetry<T>(fn: () => Promise<T>, retries = 3, baseDelay = 5000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 5, baseDelay = 12000): Promise<T> {
   try {
     return await fn();
   } catch (e: any) {
     // Inspect error object structure (Google GenAI can return nested error objects)
     const errBody = e.error || e;
     const message = e.message || errBody?.message || JSON.stringify(e);
+    const status = e.status || errBody?.status || e.code || errBody?.code;
 
     // Check for Quota/Rate Limit errors
     const isRateLimit = 
       message.includes('429') || 
       message.toLowerCase().includes('quota') || 
       message.toLowerCase().includes('resource_exhausted') ||
-      e.status === 429 ||
-      e.code === 429 ||
-      errBody?.code === 429 ||
-      errBody?.status === 'RESOURCE_EXHAUSTED';
+      status === 429 ||
+      status === 'RESOURCE_EXHAUSTED';
 
     if (isRateLimit && retries > 0) {
-      console.warn(`[System] Rate limit hit. Cooling down for ${baseDelay}ms... (${retries} retries left)`);
+      console.warn(`[System] Rate limit hit (429). Cooling down for ${baseDelay/1000}s... (${retries} retries left)`);
+      
+      // Wait for the delay
       await new Promise(resolve => setTimeout(resolve, baseDelay));
-      // Increase delay for next attempt (Exponential/Linear Backoff)
+      
+      // Increase delay for next attempt (Backoff)
+      // If it's a rate limit, we want to back off aggressively to clear the window (e.g. 12s -> 18s -> 27s -> 40s)
       return withRetry(fn, retries - 1, baseDelay * 1.5);
     }
+
+    // For other transient errors (503, 500), we can retry with shorter backoff
+    if ((status === 503 || status === 500) && retries > 0) {
+       console.warn(`[System] Transient error (${status}). Retrying...`);
+       await new Promise(resolve => setTimeout(resolve, 2000));
+       return withRetry(fn, retries - 1, baseDelay); 
+    }
+
     throw e;
   }
 }
@@ -239,7 +250,7 @@ export const generateStoryBeat = async (
 };
 
 /**
- * Step 2: Generate the Video (Veo)
+ * Step 2: Generate the Video (Veo OR Fal.ai)
  */
 export const generateVideoClip = async (
   visualDescription: string,
@@ -252,7 +263,18 @@ export const generateVideoClip = async (
   const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
   const fullPrompt = `${visualDescription}, ${stylePrompt}`;
 
-  // --- OPENROUTER VIDEO ATTEMPT ---
+  // --- 1. FAL.AI PRIORITY OVERRIDE ---
+  if (settings.falKey && settings.falKey.trim() !== '') {
+    console.log(`[Video] Delegating to Fal.ai (${settings.falModel})...`);
+    return generateFalClip(
+        fullPrompt, 
+        lastFrameBase64, 
+        settings.falKey,
+        settings.falModel || 'fal-ai/minimax/video-01'
+    );
+  }
+
+  // --- 2. OPENROUTER VIDEO ATTEMPT ---
   if (apiKey.startsWith('sk-or-')) {
       console.log("[System] Attempting OpenRouter Video Generation...");
       try {
@@ -298,7 +320,7 @@ export const generateVideoClip = async (
       }
   }
 
-  // --- GOOGLE VEO IMPLEMENTATION ---
+  // --- 3. GOOGLE VEO IMPLEMENTATION (DEFAULT) ---
   
   const ai = new GoogleGenAI({ apiKey });
   const modelName = VIDEO_MODELS[modelKey as keyof typeof VIDEO_MODELS] || VIDEO_MODELS['fast'];
@@ -307,9 +329,10 @@ export const generateVideoClip = async (
 
   let operation;
 
+  // Wrap the generation call in withRetry to handle 429s (Quota limits)
   if (lastFrameBase64) {
     // Continuation mode: Use image-to-video (or text+image-to-video)
-    operation = await ai.models.generateVideos({
+    operation = await withRetry(() => ai.models.generateVideos({
       model: modelName,
       prompt: fullPrompt, 
       image: {
@@ -321,10 +344,10 @@ export const generateVideoClip = async (
         resolution: '720p',
         aspectRatio: '16:9'
       }
-    });
+    }));
   } else {
     // Fresh start
-    operation = await ai.models.generateVideos({
+    operation = await withRetry(() => ai.models.generateVideos({
       model: modelName,
       prompt: fullPrompt,
       config: {
@@ -332,7 +355,7 @@ export const generateVideoClip = async (
         resolution: '720p',
         aspectRatio: '16:9'
       }
-    });
+    }));
   }
 
   // Poll for completion
@@ -346,8 +369,9 @@ export const generateVideoClip = async (
     if (Date.now() - startTime > MAX_WAIT) {
         throw new Error("Video generation timed out.");
     }
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5s
-    operation = await ai.operations.getVideosOperation({ operation });
+    // Poll every 5s (wrapped in retry for stability)
+    await new Promise(resolve => setTimeout(resolve, 5000)); 
+    operation = await withRetry(() => ai.operations.getVideosOperation({ operation }));
   }
 
   const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
