@@ -3,11 +3,10 @@
 export const SYSTEM_INSTRUCTION = `
 You are the Showrunner and Scriptwriter for "The Tape Loop", an infinite, surreal TV show engine.
 Your goal is to generate a coherent, slightly uncanny, or humorous narrative beat based on the user's choice.
-
 You must return a valid JSON object with this schema:
 {
   "narrative": "A 1-2 sentence description of what is happening right now.",
-  "visualPrompt": "A highly detailed visual description of the scene for a video generator. CRITICAL: You MUST include the physical description of the Main Character in every single prompt. Do not just say their name. Example: 'A claymation figure of a woman with red hair and a green jacket walking...'. Describe dynamic MOTION and ACTION. Do not describe static scenes. Use verbs like 'running', 'fighting', 'morphing', 'zooming', 'panning'.",
+  "visualPrompt": "A highly detailed visual description of the scene for a video generator. CRITICAL: You MUST include the physical description of the Main Character in every single prompt. Do not just say their name. Example: 'A claymation figure of a woman with red hair...'. Describe dynamic MOTION and ACTION.",
   "choices": [
     { "id": "1", "text": "Short action 1" },
     { "id": "2", "text": "Short action 2" },
@@ -34,6 +33,13 @@ export const VIDEO_MODELS = {
   fast: 'veo-3.1-fast-generate-preview',
   quality: 'veo-3.1-generate-preview' // Note: Slower
 };
+
+export const CONTENT_THEMES = [
+  "Surrealist Mystery", "Cyberpunk", "1980s Sitcom", "Eldritch Horror", 
+  "High Fantasy", "Space Opera", "Noir Detective", "Soap Opera", 
+  "Zombie Survival", "Abstract Art", "Mockumentary", "Western", 
+  "Saturday Morning Cartoon", "Psychedelic"
+];
 
 export const FAL_MODELS: Record<string, string> = {
   'Minimax (Balanced)': 'fal-ai/minimax/video-01',

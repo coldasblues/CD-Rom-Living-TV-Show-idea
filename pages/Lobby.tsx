@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GoogleGenAI } from '@google/genai';
@@ -265,7 +264,7 @@ const Lobby: React.FC = () => {
     // If dropped while in settings, switch to rental to show result
     if (activeTab !== 'RENTAL') setActiveTab('RENTAL');
 
-    const files = Array.from(e.dataTransfer.files).filter(f => 
+    const files = (Array.from(e.dataTransfer.files) as File[]).filter(f => 
       f.type === 'image/png' || 
       f.type === 'application/json' || 
       f.name.toLowerCase().endsWith('.json')
@@ -386,6 +385,12 @@ const Lobby: React.FC = () => {
                     className={`px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors ${activeTab === 'RENTAL' ? 'bg-green-900 text-green-100' : 'bg-black text-green-800 hover:text-green-500 border border-green-900'} disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                     Rental
+                </button>
+                <button 
+                    onClick={() => navigate('/studio')}
+                    className="px-4 py-2 font-mono text-xl uppercase tracking-widest transition-colors bg-black text-green-800 hover:text-green-500 border border-green-900"
+                >
+                    Studio
                 </button>
                 <button 
                     onClick={() => setActiveTab('SYSTEM')}
@@ -588,18 +593,7 @@ const Lobby: React.FC = () => {
                         <h2 className="text-xl text-green-500 mb-4 uppercase border-b border-green-900/50 pb-2">Production Settings</h2>
                         
                         <div className="flex flex-col gap-6">
-                            <div className="flex flex-col gap-2">
-                                <label className="text-green-800 text-sm">ANIMATION STYLE</label>
-                                <select 
-                                    value={settings.visualStyle}
-                                    onChange={(e) => savePreferences({...settings, visualStyle: e.target.value})}
-                                    className="bg-black border border-green-900 text-green-500 px-4 py-2 focus:border-green-500 focus:outline-none font-mono uppercase"
-                                >
-                                    {Object.keys(ANIMATION_STYLES).map(key => (
-                                        <option key={key} value={key}>{key.replace('_', ' ')}</option>
-                                    ))}
-                                </select>
-                            </div>
+                            {/* Visual Style Selector Removed as requested */}
 
                             <div className="flex flex-col gap-2">
                                 <label className="text-green-800 text-sm">GENERATION MODEL (GOOGLE)</label>

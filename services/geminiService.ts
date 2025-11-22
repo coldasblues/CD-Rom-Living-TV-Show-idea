@@ -1,6 +1,4 @@
-
-
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { StoryBeat } from "../types";
 import { SYSTEM_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS } from "../constants";
 import { getSettings } from "./storageService";
@@ -94,7 +92,8 @@ async function generateStoryBeatOpenRouter(
     previousContext: string[],
     userChoice: string | null,
     lastFrameBase64: string | null,
-    modelId: string
+    modelId: string,
+    styleKey: string
 ): Promise<StoryBeat> {
     const prompt = userChoice
     ? `The viewer chose: "${userChoice}". Continue the story.`
@@ -106,17 +105,29 @@ async function generateStoryBeatOpenRouter(
             { role: "system", content: SYSTEM_INSTRUCTION }
         ];
         
+        // Style Context for OpenRouter
+        const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
+        const styleInstruction = `VISUAL STYLE REQUIREMENT: The show's visual style is "${styleKey}" (${stylePrompt}). Ensure the 'visualPrompt' explicitly describes the scene using this art style (e.g. "A claymation figure of...", "A pixel art scene of...").`;
+
         // Smart Context: Persist the first history item if it's marked as Context
         let historyText = "";
+        
+        // Include Context and Rules
         const contextEntry = previousContext.find(c => c.startsWith('SERIES CONTEXT:'));
         if (contextEntry) {
             historyText += `${contextEntry}\n\n`;
         }
+        
+        const rulesMatch = previousContext.find(line => line.includes('GAME RULES'));
+        if (rulesMatch) {
+            historyText += `\nCRITICAL ENGINE RULES:\n${rulesMatch}\nYou must adhere to these rules strictly.\n\n`;
+        }
+
         historyText += `RECENT LOGS:\n${previousContext.slice(-5).join('\n')}`;
 
         // Build User content array (Text + optional Image)
         const userContent: any[] = [
-            { type: "text", text: `History: ${historyText}\n\nTask: ${prompt}` }
+            { type: "text", text: `${styleInstruction}\n\nHistory: ${historyText}\n\nTask: ${prompt}` }
         ];
 
         if (includeImage && lastFrameBase64) {
@@ -206,7 +217,8 @@ async function generateStoryBeatOpenRouter(
 export const generateStoryBeat = async (
   previousContext: string[],
   userChoice: string | null,
-  lastFrameBase64: string | null
+  lastFrameBase64: string | null,
+  styleKey: string = 'claymation'
 ): Promise<StoryBeat> => {
   const apiKey = await getApiKey();
   const settings = await getSettings();
@@ -218,7 +230,8 @@ export const generateStoryBeat = async (
           previousContext, 
           userChoice, 
           lastFrameBase64,
-          settings.openRouterModel || 'google/gemini-2.0-flash-001'
+          settings.openRouterModel || 'google/gemini-2.0-flash-001',
+          styleKey
       ));
   }
 
@@ -227,10 +240,20 @@ export const generateStoryBeat = async (
 
   let fullPrompt = "";
   let characterReinforcement = "";
+  
+  // Style Guidance
+  const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
+  fullPrompt += `ART STYLE GUIDANCE: The visual style of the show is "${styleKey}" (${stylePrompt}). Ensure the 'visualPrompt' field describes the scene specifically matching this style. For example, if claymation, mention 'clay material', 'stop motion', 'miniature'. If anime, mention 'cel shaded', '2d'.\n\n`;
 
   // Parse context to find character details for reinforcement
   // We look for the "SERIES CONTEXT" block injected by Lobby.tsx
   const seriesContext = previousContext.find(line => line.startsWith('SERIES CONTEXT:'));
+  
+  // NEW: Game Logic Injection
+  const rulesMatch = previousContext.find(line => line.includes('GAME RULES'));
+  if (rulesMatch) {
+      fullPrompt += `\nCRITICAL ENGINE RULES:\n${rulesMatch}\nYou must adhere to these rules strictly. If the rules define a health system, inventory, or mechanics, you must track it in the narrative.\n\n`;
+  }
   
   if (seriesContext) {
       fullPrompt += `${seriesContext}\n\n`;
@@ -278,7 +301,7 @@ export const generateStoryBeat = async (
     });
   }
 
-  const response = await withRetry(() => ai.models.generateContent({
+  const response = (await withRetry(() => ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: { parts },
     config: {
@@ -304,12 +327,51 @@ export const generateStoryBeat = async (
         required: ["narrative", "visualPrompt", "choices"],
       },
     },
-  }));
+  }))) as GenerateContentResponse;
 
   if (!response.text) {
     throw new Error("Failed to generate story beat.");
   }
 
+  return JSON.parse(response.text) as StoryBeat;
+};
+
+// --- NEW FUNCTION: Genesis ---
+export const generateGenesisBeat = async (
+  params: { name: string; desc: string; setting: string; themes: string[] }
+): Promise<StoryBeat> => {
+  const apiKey = await getApiKey();
+  const ai = new GoogleGenAI({ apiKey });
+  const themeStr = params.themes.join(", ");
+  const prompt = `
+    SYSTEM: You are the Pilot Writer for an interactive TV show.
+    TASK: Create the opening scene (Story Beat) based on these parameters.
+    PARAMETERS: Protagonist: ${params.name}, Appearance: ${params.desc}, Setting: ${params.setting}, Themes: ${themeStr}
+    REQUIREMENTS:
+    1. Narrative introduces character in setting.
+    2. VisualPrompt MUST include physical description of character (not just name) and setting atmosphere.
+    3. Provide 4 initial choices.
+  `;
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: { parts: [{ text: prompt }] },
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          narrative: { type: Type.STRING },
+          visualPrompt: { type: Type.STRING },
+          choices: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: { type: Type.STRING }, text: { type: Type.STRING } }, required: ["id", "text"] } },
+        },
+        required: ["narrative", "visualPrompt", "choices"],
+      },
+    },
+  })) as GenerateContentResponse;
+  
+  if (!response.text) throw new Error("Failed to generate pilot.");
   return JSON.parse(response.text) as StoryBeat;
 };
 
@@ -325,8 +387,9 @@ export const generateVideoClip = async (
   const apiKey = await getApiKey();
   const settings = await getSettings();
   const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
-  // Inject motion keywords explicitly to prevent static videos
-  const fullPrompt = `${visualDescription}, dynamic motion, action shot, ${stylePrompt}`;
+  
+  // Improved Prompt Structure: Put Style FIRST for higher adherence
+  const fullPrompt = `${stylePrompt}. ${visualDescription}, dynamic motion, action shot`;
 
   // --- 1. FAL.AI PRIORITY OVERRIDE ---
   if (settings.falKey && settings.falKey.trim() !== '') {

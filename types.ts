@@ -1,6 +1,7 @@
 
 
 
+
 export interface Choice {
   id: string;
   text: string;
@@ -28,6 +29,8 @@ export interface TapeFileSchema {
     characterName: string;
     createdAt?: string;
     visualStyle?: string; // Persist the art style (e.g. 'vintage_anime')
+    author?: string;      // Creator Name
+    gameRules?: string;   // "No-Code" Logic Injection (e.g. "This is a horror game")
   };
   engineState: {
     history: string[];
@@ -48,7 +51,7 @@ export interface AppSettings {
   apiKey: string;
   falKey?: string; // Optional key for Fal.ai
   falModel: string; // Selected Fal model endpoint
-  visualStyle: string; // Key from ANIMATION_STYLES
+  visualStyle: string; // Key from ANIMATION_STYLES (Fallback only)
   videoModel: string;  // Key from VIDEO_MODELS
   openRouterModel: string; // Custom model ID for OpenRouter
 }

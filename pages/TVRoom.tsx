@@ -4,8 +4,9 @@ import CRTContainer from '../components/CRTContainer';
 import TapeDeck, { TapeDeckHandle } from '../components/TapeDeck';
 import ControlPanel from '../components/ControlPanel';
 import NarrativeLog from '../components/NarrativeLog';
+import GenesisWizard from '../components/GenesisWizard';
 import { GameState, StoryBeat, TapeFileSchema, AppSettings } from '../types';
-import { generateStoryBeat, generateVideoClip } from '../services/geminiService';
+import { generateStoryBeat, generateVideoClip, generateGenesisBeat } from '../services/geminiService';
 import { createTapeBlob, readTapeData } from '../utils/tapeUtils';
 import { getSettings, DEFAULT_SETTINGS } from '../services/storageService';
 import { ANIMATION_STYLES, PLACEHOLDER_VIDEO } from '../constants';
@@ -42,13 +43,16 @@ const TVRoom: React.FC = () => {
     if (location.state && location.state.tapeData) {
         const data = location.state.tapeData as TapeFileSchema;
         const preloadedBase64 = location.state.tapeImgBase64 || null;
+        
+        // Preserve import stage if present (e.g. 'CARD IMPORT') so we know if it's a fresh card
+        const incomingStage = data.engineState.loadingStage || 'TAPE LOADED';
 
         return {
             ...INITIAL_STATE,
             currentBeat: data.engineState.currentBeat,
             history: data.engineState.history,
             lastFrameBase64: preloadedBase64,
-            loadingStage: 'TAPE LOADED',
+            loadingStage: incomingStage,
         };
     }
     return INITIAL_STATE;
@@ -59,7 +63,17 @@ const TVRoom: React.FC = () => {
       return !!(location.state && location.state.tapeData);
   });
   
+  // New States for Genesis
+  const [showWizard, setShowWizard] = useState(false);
+  const [isGeneratingGenesis, setIsGeneratingGenesis] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Determine if we need to show wizard
+  useEffect(() => {
+    if (!gameState.currentBeat && !gameState.isLoading && !location.state?.tapeData) {
+        setShowWizard(true);
+    }
+  }, []);
 
   // Load Settings & Start check
   useEffect(() => {
@@ -88,8 +102,55 @@ const TVRoom: React.FC = () => {
       navigate('/');
   };
 
+  const handleGenesisSubmit = async (params: { name: string; desc: string; setting: string; themes: string[] }) => {
+    setIsGeneratingGenesis(true);
+    try {
+      const genesisBeat = await generateGenesisBeat(params);
+      const genesisContext = [
+        `SERIES CONTEXT:\nCharacter: ${params.name}\nPersonality/Description: ${params.desc}\nSetting: ${params.setting}\nThemes: ${params.themes.join(', ')}`,
+        genesisBeat.narrative
+      ];
+
+      setGameState(prev => ({
+        ...prev,
+        loadingStage: `FILMING PILOT (${settings.visualStyle.toUpperCase()})...`,
+        history: genesisContext,
+        isLoading: true
+      }));
+
+      // Generate the first video clip
+      // Note: We don't have a previous frame for the very first clip of a new show.
+      const videoUrl = await generateVideoClip(
+          genesisBeat.visualPrompt, 
+          null, 
+          settings.visualStyle, 
+          settings.videoModel
+      );
+
+      setGameState(prev => ({
+        ...prev,
+        currentBeat: genesisBeat,
+        videoUrl: videoUrl,
+        isLoading: false,
+        loadingStage: 'PLAYBACK',
+      }));
+      
+      setIsStarted(true);
+      setShowWizard(false);
+    } catch (error: any) {
+      console.error("Genesis Error:", error);
+      alert("Failed to initialize tape: " + error.message);
+      setGameState(prev => ({ ...prev, loadingStage: 'INIT_FAILED', isLoading: false }));
+    } finally {
+      setIsGeneratingGenesis(false);
+    }
+  };
+
   const runLoop = async (choiceText: string | null) => {
     if (gameState.isLoading) return;
+
+    // Detect if this is the very first run from a JSON import (placeholder image)
+    const isPlaceholderImport = gameState.loadingStage === 'CARD IMPORT';
 
     try {
       let capturedFrame = gameState.lastFrameBase64;
@@ -113,10 +174,12 @@ const TVRoom: React.FC = () => {
       }));
 
       // 1. Generate Text
+      // We pass the style so the text model knows to describe things as "A claymation figure..."
       const nextBeat: StoryBeat = await generateStoryBeat(
         gameState.history,
         choiceText,
-        capturedFrame
+        capturedFrame,
+        settings.visualStyle
       );
 
       setGameState(prev => ({ 
@@ -130,9 +193,14 @@ const TVRoom: React.FC = () => {
 
       // 2. Generate Video
       try {
+          // If it's a placeholder import (text image), we pass NULL as the image
+          // This forces Veo to generate the video from scratch using the (now styled) prompt,
+          // effectively creating the claymation style instead of trying to animate the text image.
+          const imageToUse = isPlaceholderImport ? null : capturedFrame;
+
           newVideoUrl = await generateVideoClip(
               nextBeat.visualPrompt, 
-              capturedFrame, 
+              imageToUse,
               settings.visualStyle, 
               settings.videoModel
           );
@@ -185,10 +253,6 @@ const TVRoom: React.FC = () => {
   const handleStart = () => {
     setIsStarted(true);
     // If we already have a loaded tape, just resume playback/interaction state
-    // If we are starting fresh, run the loop
-    if (!gameState.currentBeat) {
-        runLoop(null);
-    }
   };
 
   const handleChoice = (choiceId: string) => {
@@ -291,6 +355,7 @@ const TVRoom: React.FC = () => {
             loadingStage: 'TAPE LOADED - READY'
           });
           setIsStarted(true);
+          setShowWizard(false); // Hide wizard if dropped
         };
 
       } catch (err) {
@@ -322,13 +387,6 @@ const TVRoom: React.FC = () => {
   // Determine effective video source (Content vs Static)
   const effectiveVideoSrc = gameState.isLoading ? PLACEHOLDER_VIDEO : gameState.videoUrl;
   
-  // Always loop the video. 
-  // When isLoading is true, it loops the static noise. 
-  // When isLoading is false, it loops the content clip.
-  const effectiveLoop = true; 
-  
-  // Hide narrative/choices during loading to prevent spoilers
-  // We show a placeholder message instead
   const displayedNarrative = gameState.isLoading 
       ? "TRANSMISSION INTERRUPTED... TUNING TO NEW FREQUENCY..." 
       : gameState.currentBeat?.narrative;
@@ -341,6 +399,11 @@ const TVRoom: React.FC = () => {
       className="min-h-screen w-full bg-[#050505]"
     >
       <CRTContainer>
+        {/* WIZARD OVERLAY */}
+        {showWizard && !gameState.currentBeat && (
+          <GenesisWizard onSubmit={handleGenesisSubmit} isProcessing={isGeneratingGenesis} />
+        )}
+
         {/* Header / Status Bar */}
         <div className="w-full bg-gray-900 p-2 flex justify-between items-center text-xs text-gray-500 border-b border-gray-800 z-50 font-mono">
           <div className="flex gap-4 items-center">
@@ -361,7 +424,7 @@ const TVRoom: React.FC = () => {
           staticImageSrc={gameState.lastFrameBase64 ? `data:image/png;base64,${gameState.lastFrameBase64}` : null}
           isProcessing={gameState.isLoading}
           onEnded={() => {}}
-          loop={effectiveLoop}
+          loop={true}
         />
 
         {/* Narrative Text */}
@@ -401,7 +464,7 @@ const TVRoom: React.FC = () => {
 
         {/* Controls */}
         <div className="flex-grow bg-[#111] flex flex-col justify-end relative">
-          {!isStarted && !gameState.isLoading ? (
+          {!isStarted && !gameState.isLoading && !showWizard ? (
              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 pointer-events-none">
                 <button 
                   onClick={handleStart}
@@ -420,12 +483,11 @@ const TVRoom: React.FC = () => {
           )}
           
           <ControlPanel 
-            // Pass empty choices while loading so the panel shows "TUNING..." state
             choices={gameState.isLoading ? [] : (gameState.currentBeat?.choices || [])}
             onChoose={handleChoice}
             onEject={handleEject}
             onHome={backToLobby}
-            disabled={gameState.isLoading || !isStarted}
+            disabled={gameState.isLoading || !isStarted || showWizard}
             isLoading={gameState.isLoading}
           />
         </div>
