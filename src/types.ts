@@ -1,3 +1,4 @@
+
 export interface Choice {
   id: string;
   text: string;
@@ -30,6 +31,8 @@ export interface TapeFileSchema {
     // NEW: Advanced Prompt Engineering
     systemInstruction?: string; // Overrides the narrative personality
     videoPromptTemplate?: string; // Overrides how video prompts are constructed
+    // NEW: Preferred Render Mode for this tape
+    renderMode?: 'video' | 'slideshow';
   };
   engineState: {
     history: string[];
@@ -53,6 +56,8 @@ export interface AppSettings {
   visualStyle: string; // Key from ANIMATION_STYLES (Fallback only)
   videoModel: string;  // Key from VIDEO_MODELS
   openRouterModel: string; // Custom model ID for OpenRouter
+  // NEW: Global Override
+  globalRenderMode: 'video' | 'slideshow'; 
 }
 
 export interface OpenRouterModel {

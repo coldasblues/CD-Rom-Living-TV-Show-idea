@@ -1,8 +1,9 @@
+
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { StoryBeat } from "../types";
 import { DEFAULT_NARRATIVE_INSTRUCTION, JSON_SCHEMA_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS, DEFAULT_VIDEO_TEMPLATE, SYSTEM_INSTRUCTION } from "../constants";
 import { getSettings } from "./storageService";
-import { generateFalClip } from "./falService";
+import { generateFalClip, generateFalImage } from "./falService";
 
 // Helper to retrieve the API key string
 async function getApiKey(): Promise<string> {
@@ -398,6 +399,44 @@ export const generateGenesisBeat = async (
   
   if (!response.text) throw new Error("Failed to generate pilot.");
   return JSON.parse(response.text) as StoryBeat;
+};
+
+/**
+ * NEW: Generates a static image for the story beat.
+ * Returns the image as a Base64 string (ready for display).
+ */
+export const generateStoryImage = async (
+  visualDescription: string,
+  styleKey: string,
+  falKey: string
+): Promise<string> => {
+  // 1. Construct Prompt (reuse style logic)
+  const stylePrompt = ANIMATION_STYLES[styleKey] || ANIMATION_STYLES['claymation'];
+  const fullPrompt = `${stylePrompt}. ${visualDescription}, masterpiece, best quality, 8k`;
+
+  console.log(`[Image] Generating Story Image:`, fullPrompt);
+
+  // 2. Call Fal (Reusing the function we made for Cover Art)
+  const imgUrl = await generateFalImage(fullPrompt, falKey);
+
+  // 3. Convert to Base64 immediately so the app can hold it in state
+  // (We need base64 to pass it back to the LLM in the next turn as context)
+  const response = await fetch(imgUrl);
+  const blob = await response.blob();
+  
+  return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+              // Remove data:image/png;base64, prefix if present
+              resolve(reader.result.split(',')[1]);
+          } else {
+              reject(new Error("Failed to process image"));
+          }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+  });
 };
 
 /**

@@ -1,11 +1,12 @@
+
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CRTContainer from '../components/CRTContainer';
 import { createTapeBlob } from '../utils/tapeUtils';
 import { TapeFileSchema, Choice } from '../types';
 import { ANIMATION_STYLES, DEFAULT_NARRATIVE_INSTRUCTION, DEFAULT_VIDEO_TEMPLATE, COVER_ART_TAGS } from '../constants';
-import { generateFalImage } from '../services/falService'; // NEW IMPORT
-import { getSettings } from '../services/storageService'; // NEW IMPORT
+import { generateFalImage } from '../services/falService'; 
+import { getSettings } from '../services/storageService'; 
 
 const VISUAL_TAGS = [
   "Cinematic Lighting", "Depth of Field", "Slow Zoom", 
@@ -21,6 +22,7 @@ const TapeStudio: React.FC = () => {
   const [title, setTitle] = useState("UNTITLED PROJECT");
   const [author, setAuthor] = useState("ANONYMOUS");
   const [visualStyle, setVisualStyle] = useState("claymation");
+  const [renderMode, setRenderMode] = useState<'video' | 'slideshow'>('video'); // NEW
   
   // Content
   const [introNarrative, setIntroNarrative] = useState("The screen flickers to life. You are standing in a dark room.");
@@ -114,7 +116,8 @@ const TapeStudio: React.FC = () => {
         author: author,
         gameRules: customRules || "Standard adventure rules apply.",
         systemInstruction: systemInstruction,
-        videoPromptTemplate: videoTemplate
+        videoPromptTemplate: videoTemplate,
+        renderMode: renderMode // NEW
       },
       engineState: {
         history: [
@@ -164,6 +167,19 @@ const TapeStudio: React.FC = () => {
                   <select value={visualStyle} onChange={e => setVisualStyle(e.target.value)} className="w-full bg-black border border-green-900 text-green-500 px-2 py-1 text-sm uppercase focus:outline-none focus:border-green-400">
                        {Object.keys(ANIMATION_STYLES).map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
                   </select>
+                  
+                  {/* NEW: Default Render Mode */}
+                  <div>
+                    <label className="text-[10px] text-green-800 uppercase block mb-1">Default Render Mode</label>
+                    <select 
+                        value={renderMode} 
+                        onChange={e => setRenderMode(e.target.value as 'video' | 'slideshow')} 
+                        className="w-full bg-black border border-green-900 text-green-500 px-2 py-1 text-sm uppercase focus:outline-none focus:border-green-400"
+                    >
+                         <option value="video">Video (Standard)</option>
+                         <option value="slideshow">Slideshow (Static)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -277,12 +293,12 @@ const TapeStudio: React.FC = () => {
 
               {/* Export Box */}
               <div className="border-2 border-dashed border-green-900/50 p-6 flex items-center gap-6 cursor-pointer hover:bg-green-900/10 transition-colors group" onClick={() => fileInputRef.current?.click()}>
-                 <div className="w-24 h-32 bg-black border border-green-800 flex items-center justify-center overflow-hidden relative shadow-[0_0_15px_rgba(0,50,0,0.5)]">
+                 <div className="w-24 h-32 bg-black border border-green-800 flex items-center justify-center overflow-hidden relative">
                    {coverImage ? <img src={coverImage} className="w-full h-full object-cover" /> : <span className="text-2xl text-green-900 group-hover:text-green-500">+</span>}
                  </div>
                  <div>
                    <h3 className="text-green-500 text-lg tracking-widest uppercase group-hover:text-green-400">CREATE MASTER TAPE</h3>
-                   <p className="text-xs text-gray-500 mt-1">Compile Logic, Metadata, and Scenes into a PNG Cartridge.</p>
+                   <p className="text-xs text-gray-500 mt-1">Compile Logic, Metadata, Prompt Presets, and Scenes into a PNG Cartridge.</p>
                  </div>
                  <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/png,image/jpeg" />
               </div>

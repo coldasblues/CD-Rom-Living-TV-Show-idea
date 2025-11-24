@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, DragEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CRTContainer from '../components/CRTContainer';
@@ -6,7 +7,7 @@ import ControlPanel from '../components/ControlPanel';
 import NarrativeLog from '../components/NarrativeLog';
 import GenesisWizard from '../components/GenesisWizard';
 import { GameState, StoryBeat, TapeFileSchema, AppSettings } from '../types';
-import { generateStoryBeat, generateVideoClip, generateGenesisBeat } from '../services/geminiService';
+import { generateStoryBeat, generateVideoClip, generateGenesisBeat, generateStoryImage } from '../services/geminiService';
 import { createTapeBlob, readTapeData } from '../utils/tapeUtils';
 import { getSettings, DEFAULT_SETTINGS } from '../services/storageService';
 import { ANIMATION_STYLES, PLACEHOLDER_VIDEO } from '../constants';
@@ -118,19 +119,30 @@ const TVRoom: React.FC = () => {
         isLoading: true
       }));
 
-      // Generate the first video clip
-      // Note: We don't have a previous frame for the very first clip of a new show.
-      const videoUrl = await generateVideoClip(
-          genesisBeat.visualPrompt, 
-          null, 
-          settings.visualStyle, 
-          settings.videoModel
-      );
+      // Generate the first visual
+      // For genesis, we respect global settings, but usually start with video for quality hook
+      // However, if globalRenderMode is slideshow, we should respect that even for pilot.
+      
+      let videoUrl: string | null = null;
+      let frameBase64: string | null = null;
+
+      if (settings.globalRenderMode === 'slideshow') {
+         if (!settings.falKey) throw new Error("Slideshow mode requires Fal.ai Key");
+         frameBase64 = await generateStoryImage(genesisBeat.visualPrompt, settings.visualStyle, settings.falKey);
+      } else {
+         videoUrl = await generateVideoClip(
+            genesisBeat.visualPrompt, 
+            null, 
+            settings.visualStyle, 
+            settings.videoModel
+         );
+      }
 
       setGameState(prev => ({
         ...prev,
         currentBeat: genesisBeat,
         videoUrl: videoUrl,
+        lastFrameBase64: frameBase64, // If slideshow, set frame immediately
         isLoading: false,
         loadingStage: 'PLAYBACK',
       }));
@@ -147,11 +159,16 @@ const TVRoom: React.FC = () => {
   };
 
   // HELPER: Get Metadata from current state
-  // The tape metadata is in location.state OR if we reloaded, we might need to persist it.
-  // For simplicity, assume location.state.tapeData is available or we check loadedState
   const getTapeMeta = (): TapeFileSchema['meta'] | undefined => {
       const locData = location.state?.tapeData as TapeFileSchema | undefined;
       return locData?.meta;
+  };
+
+  // Helper to decide mode: Cartridge override > Global Setting
+  const getEffectiveMode = () => {
+      const tapeMeta = getTapeMeta();
+      if (tapeMeta?.renderMode) return tapeMeta.renderMode;
+      return settings.globalRenderMode || 'video';
   };
 
   const runLoop = async (choiceText: string | null) => {
@@ -164,11 +181,17 @@ const TVRoom: React.FC = () => {
     const meta = getTapeMeta();
     const customSystem = meta?.systemInstruction;
     const customTemplate = meta?.videoPromptTemplate;
+    
+    // DETERMINE RENDER MODE
+    const mode = getEffectiveMode();
+    const isSlideshow = mode === 'slideshow';
 
     try {
       let capturedFrame = gameState.lastFrameBase64;
       
       // Capture the frame BEFORE we switch to static
+      // If we are in video mode, we capture from video.
+      // If we were in slideshow mode previously, lastFrameBase64 is already the static image.
       if (choiceText && tapeDeckRef.current) {
          const frame = tapeDeckRef.current.captureFrame();
          if (frame) {
@@ -187,53 +210,71 @@ const TVRoom: React.FC = () => {
       }));
 
       // 1. Generate Text
-      // We pass the style so the text model knows to describe things as "A claymation figure..."
       const nextBeat: StoryBeat = await generateStoryBeat(
         gameState.history,
         choiceText,
         capturedFrame,
         settings.visualStyle,
-        customSystem // Pass custom system instruction
+        customSystem
       );
 
       setGameState(prev => ({ 
         ...prev, 
-        // NOTE: We do NOT update currentBeat yet to prevent spoilers
-        loadingStage: `FILMING SCENE (${settings.visualStyle.toUpperCase()})...`,
+        loadingStage: isSlideshow 
+            ? `RENDERING IMAGE (${settings.visualStyle.toUpperCase()})...`
+            : `FILMING SCENE (${settings.visualStyle.toUpperCase()})...`,
       }));
 
       let newVideoUrl: string | null = null;
+      let newFrameBase64: string | null = capturedFrame;
       let status = 'PLAYBACK';
 
-      // 2. Generate Video
-      try {
-          // If it's a placeholder import (text image), we pass NULL as the image
-          // This forces Veo to generate the video from scratch using the (now styled) prompt,
-          // effectively creating the claymation style instead of trying to animate the text image.
-          const imageToUse = isPlaceholderImport ? null : capturedFrame;
+      // 2. Generate Visuals (Fork based on Mode)
+      if (isSlideshow) {
+          // --- SLIDESHOW PATH ---
+          if (!settings.falKey) throw new Error("Slideshow mode requires a Fal.ai Key (System Tab)");
+          
+          try {
+             // Generate Image
+             const base64 = await generateStoryImage(nextBeat.visualPrompt, settings.visualStyle, settings.falKey);
+             newFrameBase64 = base64; // Update current frame to the new image
+             newVideoUrl = null; // No video
+          } catch (imgErr: any) {
+             console.error("Slideshow gen failed:", imgErr);
+             status = 'ERR: IMAGE GEN FAILED';
+             throw imgErr;
+          }
+          
+      } else {
+          // --- VIDEO PATH ---
+          try {
+              const imageToUse = isPlaceholderImport ? null : capturedFrame;
 
-          newVideoUrl = await generateVideoClip(
-              nextBeat.visualPrompt, 
-              imageToUse,
-              settings.visualStyle, 
-              settings.videoModel,
-              customTemplate // Pass custom video template
-          );
-      } catch (vidError: any) {
-          // Handle OpenRouter limitation gracefully
-          if (vidError.message === "VIDEO_GEN_UNSUPPORTED_PROVIDER") {
-              console.warn("Video generation skipped due to OpenRouter provider");
-              status = 'TEXT-ONLY MODE (OPENROUTER)';
-          } else {
-              throw vidError; // Re-throw real errors
+              newVideoUrl = await generateVideoClip(
+                  nextBeat.visualPrompt, 
+                  imageToUse,
+                  settings.visualStyle, 
+                  settings.videoModel,
+                  customTemplate
+              );
+              // Note: For video, we don't update lastFrameBase64 yet; the user sees the video, 
+              // and we capture the *end* of the video next turn.
+          } catch (vidError: any) {
+              if (vidError.message === "VIDEO_GEN_UNSUPPORTED_PROVIDER") {
+                  console.warn("Video generation skipped due to OpenRouter provider");
+                  status = 'TEXT-ONLY MODE (OPENROUTER)';
+              } else {
+                  throw vidError; 
+              }
           }
       }
 
-      // 3. Reveal Everything (Text + Video) at once
+      // 3. Reveal Everything (Text + Video/Image)
       setGameState(prev => ({
         ...prev,
-        currentBeat: nextBeat, // Now safe to show narrative
+        currentBeat: nextBeat,
         videoUrl: newVideoUrl,
+        lastFrameBase64: isSlideshow ? newFrameBase64 : prev.lastFrameBase64,
         isLoading: false,
         loadingStage: status,
         history: [...prev.history, nextBeat.narrative]
@@ -243,12 +284,9 @@ const TVRoom: React.FC = () => {
       console.error("Loop Error:", error);
       
       let statusMsg = 'SIGNAL LOST';
-      
-      // Extract meaningful message from potentially nested error object
       const errBody = error.error || error;
       const errMsg = error.message || errBody?.message || JSON.stringify(error);
 
-      // Handle Quota Errors Gracefully
       if (errMsg.includes('429') || errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('resource_exhausted')) {
           statusMsg = 'ERR: QUOTA EXCEEDED (WAITING)';
       } else if (errMsg.includes('405')) {
@@ -267,7 +305,6 @@ const TVRoom: React.FC = () => {
 
   const handleStart = () => {
     setIsStarted(true);
-    // If we already have a loaded tape, just resume playback/interaction state
   };
 
   const handleChoice = (choiceId: string) => {
@@ -279,7 +316,6 @@ const TVRoom: React.FC = () => {
 
   const handleEject = async () => {
     let currentFrameBase64 = tapeDeckRef.current?.captureFrame();
-    // If capturing from static or loading, fallback to last known good frame
     if (gameState.isLoading || !currentFrameBase64) {
       currentFrameBase64 = gameState.lastFrameBase64;
     }
@@ -298,8 +334,9 @@ const TVRoom: React.FC = () => {
           characterName: meta?.characterName || "Viewer Agent",
           createdAt: new Date().toISOString(),
           visualStyle: settings.visualStyle,
-          systemInstruction: meta?.systemInstruction, // Persist custom prompts
-          videoPromptTemplate: meta?.videoPromptTemplate
+          systemInstruction: meta?.systemInstruction,
+          videoPromptTemplate: meta?.videoPromptTemplate,
+          renderMode: meta?.renderMode // Persist existing render mode
         },
         engineState: {
           history: gameState.history,
@@ -357,11 +394,6 @@ const TVRoom: React.FC = () => {
             console.log(`[System] Dropped tape overrides style to: ${tapeMeta.visualStyle}`);
             setSettings(prev => ({ ...prev, visualStyle: tapeMeta.visualStyle! }));
         }
-
-        // IMPORTANT: We must update location.state so that next loop (getTapeMeta) sees the new tape's metadata (custom prompts)
-        // Since we are not navigating, we can use window.history.replaceState to update the current history entry state
-        // or just rely on passing it explicitly? React Router navigation with 'replace' is cleaner.
-        // However, we are already on /tv. Let's do a replace navigate with new state.
         
         const res = await fetch(imgUrl);
         const blob = await res.blob();
@@ -370,18 +402,12 @@ const TVRoom: React.FC = () => {
         reader.onloadend = () => {
           const base64 = (reader.result as string).split(',')[1];
           
-          // Re-initialize state completely with new tape
           const newState = {
               tapeData: { meta: tapeMeta, engineState: loadedState },
               tapeImgBase64: base64
           };
           
           navigate('/tv', { state: newState, replace: true });
-
-          // Note: The useEffect on mount won't fire again, but we manually set gameState here 
-          // to ensure immediate UI update without waiting for nav prop check? 
-          // Actually, navigate will trigger re-render but not re-mount. 
-          // We should manually update gameState AND navigate.
           
           setGameState({
             videoUrl: null, 
@@ -447,6 +473,7 @@ const TVRoom: React.FC = () => {
               <div className={`w-2 h-2 rounded-full ${gameState.loadingStage.startsWith('ERR') ? 'bg-red-600 animate-ping' : 'bg-red-600 animate-pulse'}`}></div>
               <button onClick={() => setShowDebug(!showDebug)} className="hover:text-green-400 hover:underline cursor-pointer">CH: 03</button>
               <span className="text-green-900">STYLE: {settings.visualStyle.replace('_', ' ').toUpperCase()}</span>
+              {getEffectiveMode() === 'slideshow' && <span className="text-blue-500 font-bold ml-2">[SLIDESHOW MODE]</span>}
           </div>
           <span className={getStatusColor()}>
               {getStatusText()}
@@ -489,6 +516,7 @@ const TVRoom: React.FC = () => {
                     <div className="bg-[#0a0a0a] p-2 border border-gray-800 space-y-1">
                       <p>Loading: <span className={gameState.isLoading ? "text-yellow-500" : "text-gray-500"}>{String(gameState.isLoading)}</span></p>
                       <p>Stage: {gameState.loadingStage}</p>
+                      <p>Mode: {getEffectiveMode()}</p>
                       <p>Video URL: <span className="break-all">{gameState.videoUrl || 'NULL'}</span></p>
                       <p>History Length: {gameState.history.length}</p>
                     </div>
