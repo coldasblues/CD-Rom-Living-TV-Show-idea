@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CRTContainer from '../components/CRTContainer';
-import { createTapeBlob } from '../utils/tapeUtils';
+import { createTapeBlob, optimizeImageForCard } from '../utils/tapeUtils';
 import { TapeFileSchema, Choice } from '../types';
 import { ANIMATION_STYLES, DEFAULT_NARRATIVE_INSTRUCTION, DEFAULT_VIDEO_TEMPLATE, COVER_ART_TAGS } from '../constants';
 import { generateFalImage } from '../services/falService'; 
@@ -22,7 +22,7 @@ const TapeStudio: React.FC = () => {
   const [title, setTitle] = useState("UNTITLED PROJECT");
   const [author, setAuthor] = useState("ANONYMOUS");
   const [visualStyle, setVisualStyle] = useState("claymation");
-  const [renderMode, setRenderMode] = useState<'video' | 'slideshow'>('video'); // NEW
+  const [renderMode, setRenderMode] = useState<'video' | 'slideshow'>('video');
   
   // Content
   const [introNarrative, setIntroNarrative] = useState("The screen flickers to life. You are standing in a dark room.");
@@ -104,42 +104,51 @@ const TapeStudio: React.FC = () => {
       return;
     }
 
-    const res = await fetch(coverImage);
-    const blob = await res.blob();
+    try {
+      // 1. Convert current base64 cover image to Blob
+      const res = await fetch(coverImage);
+      const rawBlob = await res.blob();
 
-    const tapeData: TapeFileSchema = {
-      meta: {
-        version: "2.1",
-        characterName: title,
-        createdAt: new Date().toISOString(),
-        visualStyle: visualStyle, 
-        author: author,
-        gameRules: customRules || "Standard adventure rules apply.",
-        systemInstruction: systemInstruction,
-        videoPromptTemplate: videoTemplate,
-        renderMode: renderMode // NEW
-      },
-      engineState: {
-        history: [
-          `SERIES CONTEXT:\nTitle: ${title}\nAuthor: ${author}\n\nGAME RULES:\n${customRules}`,
-          introNarrative
-        ],
-        currentBeat: {
-          narrative: introNarrative,
-          visualPrompt: `${visualPrompt}, ${ANIMATION_STYLES[visualStyle] || ''}`,
-          choices: choices
+      // 2. Optimize image (Resize to 800px width, ensure PNG format for Chunk Injection)
+      const optimizedBlob = await optimizeImageForCard(rawBlob, 800);
+
+      const tapeData: TapeFileSchema = {
+        meta: {
+          version: "2.1",
+          characterName: title,
+          createdAt: new Date().toISOString(),
+          visualStyle: visualStyle, 
+          author: author,
+          gameRules: customRules || "Standard adventure rules apply.",
+          systemInstruction: systemInstruction,
+          videoPromptTemplate: videoTemplate,
+          renderMode: renderMode 
         },
-        loadingStage: "NEW CARTRIDGE"
-      }
-    };
+        engineState: {
+          history: [
+            `SERIES CONTEXT:\nTitle: ${title}\nAuthor: ${author}\n\nGAME RULES:\n${customRules}`,
+            introNarrative
+          ],
+          currentBeat: {
+            narrative: introNarrative,
+            visualPrompt: `${visualPrompt}, ${ANIMATION_STYLES[visualStyle] || ''}`,
+            choices: choices
+          },
+          loadingStage: "NEW CARTRIDGE"
+        }
+      };
 
-    const finalTape = await createTapeBlob(blob, tapeData);
-    const url = URL.createObjectURL(finalTape);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${title.replace(/\s+/g, '_')}_MASTER.png`;
-    a.click();
-    URL.revokeObjectURL(url);
+      const finalTape = await createTapeBlob(optimizedBlob, tapeData);
+      const url = URL.createObjectURL(finalTape);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/\s+/g, '_')}_MASTER.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error("Export failed:", e);
+      alert("Failed to export tape: " + e.message);
+    }
   };
 
   return (
@@ -168,7 +177,7 @@ const TapeStudio: React.FC = () => {
                        {Object.keys(ANIMATION_STYLES).map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
                   </select>
                   
-                  {/* NEW: Default Render Mode */}
+                  {/* Default Render Mode */}
                   <div>
                     <label className="text-[10px] text-green-800 uppercase block mb-1">Default Render Mode</label>
                     <select 
@@ -249,7 +258,7 @@ const TapeStudio: React.FC = () => {
                 </div>
               </div>
 
-              {/* 6. Cover Art Studio (NEW) */}
+              {/* 6. Cover Art Studio */}
               <div className="bg-black/50 p-4 border border-green-900/50">
                 <h2 className="text-green-400 mb-4 uppercase text-sm font-bold border-b border-green-900/30 pb-1">6. Cover Art Studio</h2>
                 
