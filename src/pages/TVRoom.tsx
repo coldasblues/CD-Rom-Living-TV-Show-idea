@@ -8,7 +8,7 @@ import NarrativeLog from '../components/NarrativeLog';
 import GenesisWizard from '../components/GenesisWizard';
 import { GameState, StoryBeat, TapeFileSchema, AppSettings } from '../types';
 import { generateStoryBeat, generateVideoClip, generateGenesisBeat, generateStoryImage } from '../services/geminiService';
-import { createTapeBlob, readTapeData } from '../utils/tapeUtils';
+import { createTapeBlob, readTapeData, optimizeImageForCard } from '../utils/tapeUtils';
 import { getSettings, DEFAULT_SETTINGS } from '../services/storageService';
 import { ANIMATION_STYLES, PLACEHOLDER_VIDEO } from '../constants';
 
@@ -328,6 +328,8 @@ const TVRoom: React.FC = () => {
     try {
       const meta = getTapeMeta();
       const imageBlob = base64ToBlob(currentFrameBase64);
+      const optimizedBlob = await optimizeImageForCard(imageBlob, 800);
+      
       const saveState: TapeFileSchema = {
         meta: {
           version: "2.1",
@@ -345,7 +347,7 @@ const TVRoom: React.FC = () => {
         }
       };
       
-      const taggedBlob = await createTapeBlob(imageBlob, saveState);
+      const taggedBlob = await createTapeBlob(optimizedBlob, saveState);
       const url = URL.createObjectURL(taggedBlob);
       const a = document.createElement('a');
       a.href = url;

@@ -42,6 +42,7 @@ const TapeStudio: React.FC = () => {
   const [coverImage, setCoverImage] = useState<string | null>(null);
   const [coverPrompt, setCoverPrompt] = useState("");
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addVisualTag = (tag: string) => {
@@ -84,7 +85,7 @@ const TapeStudio: React.FC = () => {
           // 1. Generate URL
           const imgUrl = await generateFalImage(finalPrompt, settings.falKey);
           
-          // 2. Convert to Base64
+          // 2. Convert to Base64 (Data URL) for preview and storage
           const res = await fetch(imgUrl);
           const blob = await res.blob();
           const reader = new FileReader();
@@ -104,6 +105,7 @@ const TapeStudio: React.FC = () => {
       return;
     }
 
+    setIsExporting(true);
     try {
       // 1. Convert current base64 cover image to Blob
       const res = await fetch(coverImage);
@@ -148,6 +150,8 @@ const TapeStudio: React.FC = () => {
     } catch (e: any) {
       console.error("Export failed:", e);
       alert("Failed to export tape: " + e.message);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -158,7 +162,7 @@ const TapeStudio: React.FC = () => {
           <div className="flex justify-between items-end border-b-2 border-green-900 pb-4 mb-6">
             <div>
               <h1 className="text-4xl text-green-500 font-bold tracking-widest text-glow">TAPE STUDIO</h1>
-              <p className="text-green-800 text-sm uppercase">Cartridge Authoring Tool v1.2</p>
+              <p className="text-green-800 text-sm uppercase">Cartridge Authoring Tool v1.3</p>
             </div>
             <button onClick={() => navigate('/')} className="text-gray-500 hover:text-green-500 uppercase tracking-wider">[ EXIT TO LOBBY ]</button>
           </div>
@@ -258,61 +262,96 @@ const TapeStudio: React.FC = () => {
                 </div>
               </div>
 
-              {/* 6. Cover Art Studio */}
+              {/* 6. Cover Art Studio (Refactored) */}
               <div className="bg-black/50 p-4 border border-green-900/50">
                 <h2 className="text-green-400 mb-4 uppercase text-sm font-bold border-b border-green-900/30 pb-1">6. Cover Art Studio</h2>
                 
-                <div className="mb-3">
-                    <textarea 
-                        value={coverPrompt} 
-                        onChange={e => setCoverPrompt(e.target.value)} 
-                        placeholder={`Prompt for cover art... (e.g. "A mysterious door in the woods, ${visualStyle}, 8k")`}
-                        className="w-full h-20 bg-[#0a0a0a] border border-green-900 text-green-500 px-3 py-2 text-xs resize-none focus:outline-none focus:border-green-400" 
-                    />
-                </div>
-                
-                {/* Tags */}
-                <div className="flex flex-wrap gap-1.5 mb-4">
-                    {COVER_ART_TAGS.map(tag => (
+                <div className="space-y-4">
+                    {/* Generator Controls */}
+                    <div className="bg-green-900/5 p-3 border border-green-900/20">
+                        <label className="text-[10px] text-green-600 uppercase font-bold mb-2 block">AI Generation (Fal.ai)</label>
+                        <div className="flex gap-2 mb-2">
+                            <textarea 
+                                value={coverPrompt} 
+                                onChange={e => setCoverPrompt(e.target.value)} 
+                                placeholder="Describe visuals..."
+                                className="flex-grow h-16 bg-[#0a0a0a] border border-green-900 text-green-500 px-3 py-2 text-xs resize-none focus:outline-none focus:border-green-400" 
+                            />
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mb-2 max-h-16 overflow-y-auto">
+                            {COVER_ART_TAGS.map(tag => (
+                                <button 
+                                    key={tag} 
+                                    onClick={() => addCoverTag(tag)}
+                                    className="text-[9px] border border-green-900/50 text-gray-500 px-2 py-1 bg-black hover:text-green-400 hover:border-green-400 transition-colors uppercase"
+                                >
+                                    + {tag}
+                                </button>
+                            ))}
+                        </div>
                         <button 
-                            key={tag} 
-                            onClick={() => addCoverTag(tag)}
-                            className="text-[9px] border border-green-900/50 text-gray-500 px-2 py-1 bg-black hover:text-green-400 hover:border-green-400 transition-colors uppercase"
+                            onClick={handleGenerateCover}
+                            disabled={isGeneratingCover}
+                            className="w-full py-2 bg-green-900/20 border border-green-500/20 text-green-400 text-xs uppercase tracking-widest hover:bg-green-900/50 hover:border-green-500/50 disabled:opacity-50 transition-all"
                         >
-                            + {tag}
+                            {isGeneratingCover ? "Generating..." : "GENERATE AI COVER"}
                         </button>
-                    ))}
+                    </div>
+
+                    {/* Unified Preview & Upload Box */}
+                    <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full aspect-square bg-black border-2 border-dashed border-green-900/50 hover:border-green-500 cursor-pointer flex items-center justify-center relative group overflow-hidden transition-colors"
+                    >
+                        {coverImage ? (
+                            <>
+                                <img src={coverImage} className="w-full h-full object-cover" alt="Cover Preview" />
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                    <span className="text-green-400 font-bold uppercase tracking-widest text-xs border border-green-400 px-3 py-1">Replace Image</span>
+                                </div>
+                            </>
+                        ) : (
+                             <div className="text-center p-4">
+                                 <div className="text-4xl mb-2 opacity-30 group-hover:opacity-60 transition-opacity">⬆️</div>
+                                 <p className="text-green-500 font-bold text-xs uppercase tracking-widest">Click to Upload Custom Image</p>
+                                 <p className="text-[10px] text-gray-600 mt-1 uppercase">or generated art will appear here</p>
+                             </div>
+                        )}
+                        <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/png,image/jpeg" />
+                    </div>
                 </div>
-
-                <button 
-                    onClick={handleGenerateCover}
-                    disabled={isGeneratingCover}
-                    className="w-full py-2 bg-green-900/30 border border-green-500/30 text-green-400 text-xs uppercase tracking-widest hover:bg-green-900/60 disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                    {isGeneratingCover ? (
-                        <>
-                           <span className="animate-spin w-3 h-3 border-2 border-t-transparent border-green-400 rounded-full"></span>
-                           GENERATING...
-                        </>
-                    ) : (
-                        "GENERATE AI COVER"
-                    )}
-                </button>
               </div>
 
-              {/* Export Box */}
-              <div className="border-2 border-dashed border-green-900/50 p-6 flex items-center gap-6 cursor-pointer hover:bg-green-900/10 transition-colors group" onClick={() => fileInputRef.current?.click()}>
-                 <div className="w-24 h-32 bg-black border border-green-800 flex items-center justify-center overflow-hidden relative">
-                   {coverImage ? <img src={coverImage} className="w-full h-full object-cover" /> : <span className="text-2xl text-green-900 group-hover:text-green-500">+</span>}
-                 </div>
-                 <div>
-                   <h3 className="text-green-500 text-lg tracking-widest uppercase group-hover:text-green-400">CREATE MASTER TAPE</h3>
-                   <p className="text-xs text-gray-500 mt-1">Compile Logic, Metadata, Prompt Presets, and Scenes into a PNG Cartridge.</p>
-                 </div>
-                 <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/png,image/jpeg" />
-              </div>
-            </div>
+            </div> {/* End Right Column */}
+          </div> {/* End Grid */}
+
+          {/* 7. FINAL FOOTER SUBMIT (Refactored) */}
+          <div className="mt-12 mb-8">
+             <button 
+                disabled={!coverImage || isExporting}
+                onClick={handleExport}
+                className={`
+                  w-full py-6 text-xl font-black tracking-[0.2em] uppercase transition-all duration-300
+                  ${!coverImage 
+                     ? 'bg-gray-800 text-gray-600 border border-gray-700 cursor-not-allowed' 
+                     : 'bg-green-600 text-black hover:bg-green-500 shadow-[0_0_40px_rgba(0,255,0,0.3)] hover:shadow-[0_0_60px_rgba(0,255,0,0.5)] transform hover:scale-[1.01]'
+                  }
+                `}
+              >
+                 {isExporting ? (
+                     <div className="flex items-center justify-center gap-3">
+                        <span className="w-5 h-5 border-2 border-t-transparent border-black rounded-full animate-spin"></span>
+                        BURNING CARTRIDGE...
+                     </div>
+                 ) : (
+                     "BURN CARTRIDGE (DOWNLOAD)"
+                 )}
+              </button>
+              <p className="text-center text-[10px] text-gray-600 mt-3 uppercase tracking-wider">
+                  Compiles all metadata, logic, and visuals into a single standalone PNG file.
+              </p>
           </div>
+
         </div>
       </CRTContainer>
     </div>
