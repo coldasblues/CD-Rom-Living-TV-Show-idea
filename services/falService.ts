@@ -1,4 +1,5 @@
 import { fal } from "@fal-ai/client";
+import { FAL_IMAGE_MODELS } from "../constants";
 
 // Helper: Optimize image for upload (Resize + JPEG compression)
 // Fal.ai has a 10MB limit, and PNGs can easily exceed this or be unnecessarily large.
@@ -82,6 +83,37 @@ const findVideoUrl = (obj: any): string | undefined => {
   }
   
   return undefined;
+};
+
+/**
+ * Generates a static image (Cover Art) using Fal.ai
+ */
+export const generateFalImage = async (prompt: string, falKey: string): Promise<string> => {
+  console.log("[Fal.ai] Generating Cover Art...");
+  
+  try {
+    fal.config({ credentials: falKey });
+
+    const result: any = await fal.subscribe(FAL_IMAGE_MODELS['Flux Pro 1.1'], {
+      input: {
+        prompt: prompt,
+        image_size: "portrait_4_3", // Matches Cartridge shape
+        safety_tolerance: "2"
+      },
+      logs: true
+    });
+
+    // Extract Image URL (Flux usually returns 'images': [{url: ...}])
+    if (result.images && result.images[0] && result.images[0].url) {
+        return result.images[0].url;
+    }
+    
+    throw new Error("No image returned from Fal.");
+
+  } catch (error: any) {
+    console.error("Fal Image Gen Error:", error);
+    throw new Error(error.message || "Failed to generate image");
+  }
 };
 
 /**

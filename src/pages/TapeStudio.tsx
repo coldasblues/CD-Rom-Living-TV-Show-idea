@@ -241,7 +241,7 @@ const TapeStudio: React.FC = () => {
                 <div className="space-y-4">
                     <textarea value={introNarrative} onChange={e => setIntroNarrative(e.target.value)} className="w-full h-16 bg-black border border-green-900 text-green-500 px-3 py-2 text-sm resize-none focus:outline-none focus:border-green-400" placeholder="Intro Narrative..." />
                     <textarea value={visualPrompt} onChange={e => setVisualPrompt(e.target.value)} className="w-full h-24 bg-black border border-green-900 text-green-500 px-3 py-2 mb-2 text-sm resize-none focus:outline-none focus:border-green-400" placeholder="Visual Description..." />
-                    <div className="flex flex-wrap gap-2">{VISUAL_TAGS.map(tag => <button key={tag} onClick={() => addVisualTag(tag)} className="text-[10px] border border-green-900/50 text-gray-400 px-2 py-1 bg-black hover:text-green-400 hover:border-green-400">+ {tag}</button>)}</div>
+                    <div className="flex flex-wrap gap-2">{VISUAL_TAGS.map(tag => <button key={tag} onClick={() => addVisualTag(tag)} className="text-[10px] border border-green-900/50 text-gray-400 px-2 py-1 bg-black hover:text-green-400 hover:border-green-400 transition-colors">+ {tag}</button>)}</div>
                 </div>
               </div>
 
@@ -262,7 +262,7 @@ const TapeStudio: React.FC = () => {
                 </div>
               </div>
 
-              {/* 6. Cover Art Studio (Refactored) */}
+              {/* 6. Cover Art Studio (Preview & Upload) */}
               <div className="bg-black/50 p-4 border border-green-900/50">
                 <h2 className="text-green-400 mb-4 uppercase text-sm font-bold border-b border-green-900/30 pb-1">6. Cover Art Studio</h2>
                 
@@ -298,20 +298,24 @@ const TapeStudio: React.FC = () => {
                         </button>
                     </div>
 
-                    {/* Unified Preview & Upload Box */}
-                    <div 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full aspect-square bg-black border-2 border-dashed border-green-900/50 hover:border-green-500 cursor-pointer flex items-center justify-center relative group overflow-hidden transition-colors"
-                    >
+                    {/* Unified Preview & Upload Box (TRIGGER UPLOAD ONLY) */}
+                    <div className="w-full aspect-square bg-black border-2 border-dashed border-green-900/50 hover:border-green-500 flex items-center justify-center relative group overflow-hidden transition-colors">
+                        {/* THE CLICK HANDLER IS ONLY HERE */}
+                        <div 
+                           onClick={() => fileInputRef.current?.click()}
+                           className="absolute inset-0 z-10 cursor-pointer"
+                           title="Click to Upload Cover Art"
+                        ></div>
+                        
                         {coverImage ? (
                             <>
                                 <img src={coverImage} className="w-full h-full object-cover" alt="Cover Preview" />
-                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity pointer-events-none">
                                     <span className="text-green-400 font-bold uppercase tracking-widest text-xs border border-green-400 px-3 py-1">Replace Image</span>
                                 </div>
                             </>
                         ) : (
-                             <div className="text-center p-4">
+                             <div className="text-center p-4 pointer-events-none">
                                  <div className="text-4xl mb-2 opacity-30 group-hover:opacity-60 transition-opacity">⬆️</div>
                                  <p className="text-green-500 font-bold text-xs uppercase tracking-widest">Click to Upload Custom Image</p>
                                  <p className="text-[10px] text-gray-600 mt-1 uppercase">or generated art will appear here</p>
@@ -322,35 +326,36 @@ const TapeStudio: React.FC = () => {
                 </div>
               </div>
 
+              {/* 7. FINAL FOOTER SUBMIT (Distinct separate section, NO file input logic) */}
+              <div className="bg-black/80 border border-green-900 p-6 mt-8 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
+                  <h2 className="text-green-500 mb-4 uppercase text-sm font-bold tracking-widest">7. Finalize Cartridge</h2>
+                  <button 
+                    disabled={!coverImage || isExporting}
+                    onClick={handleExport}
+                    className={`
+                      w-full py-6 text-xl font-black tracking-[0.2em] uppercase transition-all duration-300
+                      ${!coverImage 
+                        ? 'bg-gray-900 text-gray-700 border border-gray-800 cursor-not-allowed' 
+                        : 'bg-green-600 text-black hover:bg-green-500 shadow-[0_0_20px_rgba(0,255,0,0.4)] hover:shadow-[0_0_40px_rgba(0,255,0,0.6)] transform hover:scale-[1.01]'
+                      }
+                    `}
+                  >
+                    {isExporting ? (
+                        <div className="flex items-center justify-center gap-3">
+                            <span className="w-5 h-5 border-2 border-t-transparent border-black rounded-full animate-spin"></span>
+                            BURNING CARTRIDGE...
+                        </div>
+                    ) : (
+                        "BURN CARTRIDGE (DOWNLOAD)"
+                    )}
+                  </button>
+                  <p className="text-center text-[10px] text-gray-500 mt-3 uppercase tracking-wider">
+                      Compiles logic, metadata, and visuals into a standard PNG cartridge.
+                  </p>
+              </div>
+
             </div> {/* End Right Column */}
           </div> {/* End Grid */}
-
-          {/* 7. FINAL FOOTER SUBMIT (Refactored) */}
-          <div className="mt-12 mb-8">
-             <button 
-                disabled={!coverImage || isExporting}
-                onClick={handleExport}
-                className={`
-                  w-full py-6 text-xl font-black tracking-[0.2em] uppercase transition-all duration-300
-                  ${!coverImage 
-                     ? 'bg-gray-800 text-gray-600 border border-gray-700 cursor-not-allowed' 
-                     : 'bg-green-600 text-black hover:bg-green-500 shadow-[0_0_40px_rgba(0,255,0,0.3)] hover:shadow-[0_0_60px_rgba(0,255,0,0.5)] transform hover:scale-[1.01]'
-                  }
-                `}
-              >
-                 {isExporting ? (
-                     <div className="flex items-center justify-center gap-3">
-                        <span className="w-5 h-5 border-2 border-t-transparent border-black rounded-full animate-spin"></span>
-                        BURNING CARTRIDGE...
-                     </div>
-                 ) : (
-                     "BURN CARTRIDGE (DOWNLOAD)"
-                 )}
-              </button>
-              <p className="text-center text-[10px] text-gray-600 mt-3 uppercase tracking-wider">
-                  Compiles all metadata, logic, and visuals into a single standalone PNG file.
-              </p>
-          </div>
 
         </div>
       </CRTContainer>

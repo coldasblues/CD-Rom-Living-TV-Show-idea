@@ -1,4 +1,3 @@
-
 import { GameState, StoryBeat } from '../types';
 
 // CRC32 Implementation for PNG Chunks
@@ -185,4 +184,56 @@ export const readTapeData = async (file: File): Promise<{ state: any; imgUrl: st
     state: foundData,
     imgUrl: URL.createObjectURL(file)
   };
+};
+
+/**
+ * Resizes an image blob to a maximum width while maintaining aspect ratio.
+ * Returns a PNG blob suitable for tape data injection.
+ */
+export const optimizeImageForCard = async (blob: Blob, maxWidth: number = 800): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.src = url;
+    
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      
+      let width = img.width;
+      let height = img.height;
+      const aspect = height / width;
+
+      if (width > maxWidth) {
+        width = maxWidth;
+        height = width * aspect;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error("Canvas context failed"));
+        return;
+      }
+      
+      // Draw image
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // Export as PNG (Required for tEXt chunks)
+      canvas.toBlob((b) => {
+        if (b) {
+            resolve(b);
+        } else {
+            reject(new Error("Blob creation failed"));
+        }
+      }, 'image/png');
+    };
+    
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load image for optimization"));
+    };
+  });
 };

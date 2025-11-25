@@ -1,3 +1,4 @@
+
 // The Narrative Persona (User Editable)
 export const DEFAULT_NARRATIVE_INSTRUCTION = `
 You are the Showrunner and Scriptwriter for "The Tape Loop", an infinite, surreal TV show engine.

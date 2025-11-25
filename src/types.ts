@@ -1,4 +1,5 @@
 
+
 export interface Choice {
   id: string;
   text: string;
@@ -28,11 +29,9 @@ export interface TapeFileSchema {
     visualStyle?: string; // Persist the art style (e.g. 'vintage_anime')
     author?: string;      // Creator Name
     gameRules?: string;   // "No-Code" Logic Injection (e.g. "This is a horror game")
-    // NEW: Advanced Prompt Engineering
-    systemInstruction?: string; // Overrides the narrative personality
-    videoPromptTemplate?: string; // Overrides how video prompts are constructed
-    // NEW: Preferred Render Mode for this tape
-    renderMode?: 'video' | 'slideshow';
+    systemInstruction?: string; // New: Advanced Prompt Engineering
+    videoPromptTemplate?: string; // New: Custom Video Prompting
+    renderMode?: 'video' | 'slideshow'; // New: Per-tape render mode preference
   };
   engineState: {
     history: string[];
@@ -56,8 +55,7 @@ export interface AppSettings {
   visualStyle: string; // Key from ANIMATION_STYLES (Fallback only)
   videoModel: string;  // Key from VIDEO_MODELS
   openRouterModel: string; // Custom model ID for OpenRouter
-  // NEW: Global Override
-  globalRenderMode: 'video' | 'slideshow'; 
+  globalRenderMode: 'video' | 'slideshow'; // New: Global Render Mode
 }
 
 export interface OpenRouterModel {

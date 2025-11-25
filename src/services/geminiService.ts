@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { StoryBeat } from "../types";
 import { DEFAULT_NARRATIVE_INSTRUCTION, JSON_SCHEMA_INSTRUCTION, ANIMATION_STYLES, VIDEO_MODELS, DEFAULT_VIDEO_TEMPLATE, SYSTEM_INSTRUCTION } from "../constants";
