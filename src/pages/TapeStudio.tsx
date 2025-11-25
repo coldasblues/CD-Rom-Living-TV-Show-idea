@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CRTContainer from '../components/CRTContainer';
@@ -41,8 +40,12 @@ const TapeStudio: React.FC = () => {
   // Cover Art
   const [coverImage, setCoverImage] = useState<string | null>(null);
   const [coverPrompt, setCoverPrompt] = useState("");
+  
+  // Status States
+  const [genStatus, setGenStatus] = useState("");
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addVisualTag = (tag: string) => {
@@ -65,43 +68,61 @@ const TapeStudio: React.FC = () => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => setCoverImage(reader.result as string);
+      reader.onloadend = () => {
+          setCoverImage(reader.result as string);
+          setGenStatus("Image Uploaded Manually");
+      };
       reader.readAsDataURL(file);
     }
   };
 
   const handleGenerateCover = async () => {
-      const settings = await getSettings();
-      if (!settings.falKey) {
-          alert("Please add a Fal.ai Key in the SYSTEM tab to use the generator.");
-          return;
-      }
-      
-      // Default prompt if empty
-      const finalPrompt = coverPrompt || `A retro VHS cover art for a show called "${title}". ${visualStyle} style, masterpiece, best quality.`;
-      
+      // 1. Immediate UI Feedback
       setIsGeneratingCover(true);
+      setGenStatus("Checking Credentials...");
+      
       try {
-          // 1. Generate URL
-          const imgUrl = await generateFalImage(finalPrompt, settings.falKey);
+          const settings = await getSettings();
           
-          // 2. Convert to Base64 (Data URL) for preview and storage
+          if (!settings.falKey) {
+              setGenStatus("ERROR: No Fal.ai Key.");
+              alert("MISSING KEY: Please go to the SYSTEM tab and enter a Fal.ai Key to use the generator.");
+              setIsGeneratingCover(false);
+              return;
+          }
+          
+          // Default prompt if empty
+          const finalPrompt = coverPrompt || `A retro VHS cover art for a show called "${title}". ${visualStyle} style, masterpiece, best quality.`;
+          
+          setGenStatus("Generating (Flux Pro 1.1)...");
+          
+          // 2. Generate URL
+          const imgUrl = await generateFalImage(finalPrompt, settings.falKey);
+          setGenStatus("Downloading Preview...");
+
+          // 3. Convert to Base64 (Data URL) for preview and storage
           const res = await fetch(imgUrl);
           const blob = await res.blob();
           const reader = new FileReader();
-          reader.onloadend = () => setCoverImage(reader.result as string);
+          reader.onloadend = () => {
+              setCoverImage(reader.result as string);
+              setGenStatus("Cover Art Generated Successfully.");
+              setIsGeneratingCover(false);
+          };
           reader.readAsDataURL(blob);
           
       } catch (e: any) {
-          alert("Generation Failed: " + e.message);
-      } finally {
+          console.error("Cover Gen Error:", e);
+          setGenStatus(`FAILED: ${e.message}`);
+          alert(`GENERATION FAILED: ${e.message}`);
           setIsGeneratingCover(false);
       }
   };
 
   const handleExport = async () => {
     if (!coverImage) {
-      alert("Please upload or generate a cover image for your tape!");
+      setGenStatus("ERROR: Missing Cover Image");
+      alert("PLEASE ADD COVER ART: Generate one with AI or click the box to upload your own.");
       return;
     }
 
@@ -156,209 +177,227 @@ const TapeStudio: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#050505]">
-      <CRTContainer>
-        <div className="h-full w-full overflow-y-auto p-6 pb-24 font-mono">
-          <div className="flex justify-between items-end border-b-2 border-green-900 pb-4 mb-6">
-            <div>
-              <h1 className="text-4xl text-green-500 font-bold tracking-widest text-glow">TAPE STUDIO</h1>
-              <p className="text-green-800 text-sm uppercase">Cartridge Authoring Tool v1.3</p>
+    <div className="min-h-full w-full font-mono text-green-400">
+      
+      {/* Header */}
+      <div className="flex justify-between items-end border-b-2 border-green-800 pb-2 mb-4 sticky top-0 bg-[#0a0a0a] z-20 pt-2">
+        <div>
+          <h1 className="text-3xl text-green-400 font-bold tracking-widest text-glow">TAPE STUDIO</h1>
+          <p className="text-green-800 text-xs uppercase">Cartridge Authoring Tool v1.3</p>
+        </div>
+        <button onClick={() => navigate('/')} className="text-sm text-gray-500 hover:text-green-500 uppercase tracking-wider border border-transparent hover:border-green-900 px-2 py-1 transition-all">
+            [ EXIT TO LOBBY ]
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* LEFT COLUMN: SETTINGS */}
+        <div className="lg:col-span-5 space-y-4">
+          
+          {/* 1. Info */}
+          <div className="bg-black/40 p-3 border border-green-900/50 rounded-sm">
+            <h2 className="text-green-500 mb-2 uppercase text-xs font-bold border-b border-green-900/30 pb-1 flex justify-between">
+                <span>1. Cartridge Metadata</span>
+            </h2>
+            <div className="space-y-2">
+              <div>
+                  <label className="text-[9px] text-green-800 uppercase block">Project Title</label>
+                  <input value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-[#050505] border border-green-900 text-green-400 px-2 py-1 text-sm focus:outline-none focus:border-green-500 placeholder-green-900" placeholder="ENTER TITLE" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                  <div>
+                      <label className="text-[9px] text-green-800 uppercase block">Author</label>
+                      <input value={author} onChange={e => setAuthor(e.target.value)} className="w-full bg-[#050505] border border-green-900 text-green-400 px-2 py-1 text-sm focus:outline-none focus:border-green-500" placeholder="NAME" />
+                  </div>
+                  <div>
+                      <label className="text-[9px] text-green-800 uppercase block">Visual Style</label>
+                      <select value={visualStyle} onChange={e => setVisualStyle(e.target.value)} className="w-full bg-[#050505] border border-green-900 text-green-400 px-2 py-1 text-sm uppercase focus:outline-none focus:border-green-500 cursor-pointer">
+                           {Object.keys(ANIMATION_STYLES).map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                      </select>
+                  </div>
+              </div>
+              <div>
+                <label className="text-[9px] text-green-800 uppercase block">Default Render Mode</label>
+                <select 
+                    value={renderMode} 
+                    onChange={e => setRenderMode(e.target.value as 'video' | 'slideshow')} 
+                    className="w-full bg-[#050505] border border-green-900 text-green-400 px-2 py-1 text-sm uppercase focus:outline-none focus:border-green-500 cursor-pointer"
+                >
+                     <option value="video">Video (Cinematic Motion)</option>
+                     <option value="slideshow">Slideshow (Static Images)</option>
+                </select>
+              </div>
             </div>
-            <button onClick={() => navigate('/')} className="text-gray-500 hover:text-green-500 uppercase tracking-wider">[ EXIT TO LOBBY ]</button>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* LEFT COLUMN */}
-            <div className="lg:col-span-4 space-y-6">
-              
-              {/* 1. Info */}
-              <div className="bg-black/50 p-4 border border-green-900/50">
-                <h2 className="text-green-400 mb-4 uppercase text-sm font-bold border-b border-green-900/30 pb-1">1. Cartridge Info</h2>
-                <div className="space-y-3">
-                  <input value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-black border border-green-900 text-green-500 px-2 py-1 text-sm focus:outline-none focus:border-green-400" placeholder="Title" />
-                  <input value={author} onChange={e => setAuthor(e.target.value)} className="w-full bg-black border border-green-900 text-green-500 px-2 py-1 text-sm focus:outline-none focus:border-green-400" placeholder="Author" />
-                  <select value={visualStyle} onChange={e => setVisualStyle(e.target.value)} className="w-full bg-black border border-green-900 text-green-500 px-2 py-1 text-sm uppercase focus:outline-none focus:border-green-400">
-                       {Object.keys(ANIMATION_STYLES).map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-                  </select>
-                  
-                  {/* Default Render Mode */}
-                  <div>
-                    <label className="text-[10px] text-green-800 uppercase block mb-1">Default Render Mode</label>
-                    <select 
-                        value={renderMode} 
-                        onChange={e => setRenderMode(e.target.value as 'video' | 'slideshow')} 
-                        className="w-full bg-black border border-green-900 text-green-500 px-2 py-1 text-sm uppercase focus:outline-none focus:border-green-400"
-                    >
-                         <option value="video">Video (Standard)</option>
-                         <option value="slideshow">Slideshow (Static)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
+          {/* 2. Core Logic */}
+          <div className="bg-black/40 p-3 border border-green-900/50 rounded-sm">
+            <h2 className="text-green-500 text-xs uppercase mb-2 font-bold border-b border-green-900/30 pb-1">2. Game Mechanics</h2>
+            <textarea value={customRules} onChange={e => setCustomRules(e.target.value)} placeholder="// e.g. 'This is a horror game. The user has 3 health points.'" className="w-full h-24 bg-[#050505] border border-green-900 text-green-400 px-2 py-1 font-mono text-sm resize-none focus:outline-none focus:border-green-500 placeholder-green-900" />
+          </div>
 
-              {/* 2. Core Logic */}
-              <div className="bg-black/50 p-4 border border-green-900/50">
-                <h2 className="text-green-400 text-sm uppercase mb-2 font-bold border-b border-green-900/30 pb-1">2. Core Game Rules</h2>
-                <textarea value={customRules} onChange={e => setCustomRules(e.target.value)} placeholder="// Define game mechanics (Health, Inventory, Tone)..." className="w-full h-40 bg-[#0a0a0a] border border-green-900 text-green-400 px-3 py-2 font-mono text-xs resize-none focus:outline-none focus:border-green-400" />
-              </div>
-
-              {/* 3. Advanced Prompt Engineering */}
-              <div className="bg-black/50 border border-green-900/50">
-                <button onClick={() => setShowAdvanced(!showAdvanced)} className="w-full p-4 flex justify-between items-center text-green-400 hover:bg-green-900/20 transition-colors">
-                    <span className="text-sm uppercase font-bold">3. Prompt Engineer Mode</span>
-                    <span>{showAdvanced ? '▼' : '▶'}</span>
-                </button>
-                
-                {showAdvanced && (
-                    <div className="p-4 pt-0 border-t border-green-900/30 space-y-4">
-                        <div>
-                            <label className="text-[10px] text-green-800 uppercase block mb-1">Narrative Persona (System Prompt)</label>
-                            <textarea 
-                                value={systemInstruction} 
-                                onChange={e => setSystemInstruction(e.target.value)} 
-                                className="w-full h-32 bg-[#050505] border border-green-900/50 text-green-600 px-2 py-1 font-mono text-[10px] resize-none focus:outline-none focus:border-green-400"
-                            />
-                        </div>
-                        <div>
-                            <label className="text-[10px] text-green-800 uppercase block mb-1">Video Generation Template</label>
-                            <textarea 
-                                value={videoTemplate} 
-                                onChange={e => setVideoTemplate(e.target.value)} 
-                                className="w-full h-24 bg-[#050505] border border-green-900/50 text-green-600 px-2 py-1 font-mono text-[10px] resize-none focus:outline-none focus:border-green-400"
-                            />
-                        </div>
+          {/* 3. Advanced (Collapsible) */}
+          <div className="bg-black/40 border border-green-900/50 rounded-sm">
+            <button onClick={() => setShowAdvanced(!showAdvanced)} className="w-full p-2 flex justify-between items-center text-green-600 hover:text-green-400 hover:bg-green-900/10 transition-colors">
+                <span className="text-xs uppercase font-bold">3. Advanced Prompt Engineering</span>
+                <span className="text-xs">{showAdvanced ? '[-]' : '[+]'}</span>
+            </button>
+            
+            {showAdvanced && (
+                <div className="p-3 pt-0 border-t border-green-900/30 space-y-2">
+                    <div>
+                        <label className="text-[9px] text-green-800 uppercase block">System Instruction (Persona)</label>
+                        <textarea 
+                            value={systemInstruction} 
+                            onChange={e => setSystemInstruction(e.target.value)} 
+                            className="w-full h-20 bg-[#050505] border border-green-900/50 text-green-600 px-2 py-1 font-mono text-[10px] resize-none focus:outline-none focus:border-green-500"
+                        />
                     </div>
-                )}
-              </div>
-            </div>
-
-            {/* RIGHT COLUMN */}
-            <div className="lg:col-span-8 space-y-6">
-              
-              {/* 4. The Hook */}
-              <div className="bg-black/50 p-4 border border-green-900/50">
-                <h2 className="text-green-400 mb-4 uppercase text-sm font-bold border-b border-green-900/30 pb-1">4. The Hook</h2>
-                <div className="space-y-4">
-                    <textarea value={introNarrative} onChange={e => setIntroNarrative(e.target.value)} className="w-full h-16 bg-black border border-green-900 text-green-500 px-3 py-2 text-sm resize-none focus:outline-none focus:border-green-400" placeholder="Intro Narrative..." />
-                    <textarea value={visualPrompt} onChange={e => setVisualPrompt(e.target.value)} className="w-full h-24 bg-black border border-green-900 text-green-500 px-3 py-2 mb-2 text-sm resize-none focus:outline-none focus:border-green-400" placeholder="Visual Description..." />
-                    <div className="flex flex-wrap gap-2">{VISUAL_TAGS.map(tag => <button key={tag} onClick={() => addVisualTag(tag)} className="text-[10px] border border-green-900/50 text-gray-400 px-2 py-1 bg-black hover:text-green-400 hover:border-green-400 transition-colors">+ {tag}</button>)}</div>
-                </div>
-              </div>
-
-              {/* 5. Choices */}
-              <div className="bg-black/50 p-4 border border-green-900/50">
-                <div className="flex justify-between mb-2 border-b border-green-900/30 pb-1">
-                  <h2 className="text-green-400 text-sm uppercase font-bold">5. Choices</h2>
-                  <button onClick={addChoice} className="text-[10px] bg-green-900 text-black px-2 py-1 font-bold hover:bg-green-600">+ ADD</button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {choices.map((c, i) => (
-                    <div key={i} className="flex gap-2 items-center">
-                      <span className="text-green-800 text-xs">{i + 1}.</span>
-                      <input value={c.text} onChange={e => updateChoice(i, e.target.value)} className="bg-transparent border-b border-green-900 text-green-500 w-full text-sm focus:outline-none focus:border-green-400" />
-                      <button onClick={() => removeChoice(i)} className="text-red-900 hover:text-red-500 text-xs px-2">X</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* 6. Cover Art Studio (Preview & Upload) */}
-              <div className="bg-black/50 p-4 border border-green-900/50">
-                <h2 className="text-green-400 mb-4 uppercase text-sm font-bold border-b border-green-900/30 pb-1">6. Cover Art Studio</h2>
-                
-                <div className="space-y-4">
-                    {/* Generator Controls */}
-                    <div className="bg-green-900/5 p-3 border border-green-900/20">
-                        <label className="text-[10px] text-green-600 uppercase font-bold mb-2 block">AI Generation (Fal.ai)</label>
-                        <div className="flex gap-2 mb-2">
-                            <textarea 
-                                value={coverPrompt} 
-                                onChange={e => setCoverPrompt(e.target.value)} 
-                                placeholder="Describe visuals..."
-                                className="flex-grow h-16 bg-[#0a0a0a] border border-green-900 text-green-500 px-3 py-2 text-xs resize-none focus:outline-none focus:border-green-400" 
-                            />
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 mb-2 max-h-16 overflow-y-auto">
-                            {COVER_ART_TAGS.map(tag => (
-                                <button 
-                                    key={tag} 
-                                    onClick={() => addCoverTag(tag)}
-                                    className="text-[9px] border border-green-900/50 text-gray-500 px-2 py-1 bg-black hover:text-green-400 hover:border-green-400 transition-colors uppercase"
-                                >
-                                    + {tag}
-                                </button>
-                            ))}
-                        </div>
-                        <button 
-                            onClick={handleGenerateCover}
-                            disabled={isGeneratingCover}
-                            className="w-full py-2 bg-green-900/20 border border-green-500/20 text-green-400 text-xs uppercase tracking-widest hover:bg-green-900/50 hover:border-green-500/50 disabled:opacity-50 transition-all"
-                        >
-                            {isGeneratingCover ? "Generating..." : "GENERATE AI COVER"}
-                        </button>
-                    </div>
-
-                    {/* Unified Preview & Upload Box (TRIGGER UPLOAD ONLY) */}
-                    <div className="w-full aspect-square bg-black border-2 border-dashed border-green-900/50 hover:border-green-500 flex items-center justify-center relative group overflow-hidden transition-colors">
-                        {/* THE CLICK HANDLER IS ONLY HERE */}
-                        <div 
-                           onClick={() => fileInputRef.current?.click()}
-                           className="absolute inset-0 z-10 cursor-pointer"
-                           title="Click to Upload Cover Art"
-                        ></div>
-                        
-                        {coverImage ? (
-                            <>
-                                <img src={coverImage} className="w-full h-full object-cover" alt="Cover Preview" />
-                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity pointer-events-none">
-                                    <span className="text-green-400 font-bold uppercase tracking-widest text-xs border border-green-400 px-3 py-1">Replace Image</span>
-                                </div>
-                            </>
-                        ) : (
-                             <div className="text-center p-4 pointer-events-none">
-                                 <div className="text-4xl mb-2 opacity-30 group-hover:opacity-60 transition-opacity">⬆️</div>
-                                 <p className="text-green-500 font-bold text-xs uppercase tracking-widest">Click to Upload Custom Image</p>
-                                 <p className="text-[10px] text-gray-600 mt-1 uppercase">or generated art will appear here</p>
-                             </div>
-                        )}
-                        <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/png,image/jpeg" />
+                    <div>
+                        <label className="text-[9px] text-green-800 uppercase block">Video Prompt Template</label>
+                        <textarea 
+                            value={videoTemplate} 
+                            onChange={e => setVideoTemplate(e.target.value)} 
+                            className="w-full h-16 bg-[#050505] border border-green-900/50 text-green-600 px-2 py-1 font-mono text-[10px] resize-none focus:outline-none focus:border-green-500"
+                        />
                     </div>
                 </div>
-              </div>
-
-              {/* 7. FINAL FOOTER SUBMIT (Distinct separate section, NO file input logic) */}
-              <div className="bg-black/80 border border-green-900 p-6 mt-8 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
-                  <h2 className="text-green-500 mb-4 uppercase text-sm font-bold tracking-widest">7. Finalize Cartridge</h2>
-                  <button 
-                    disabled={!coverImage || isExporting}
-                    onClick={handleExport}
-                    className={`
-                      w-full py-6 text-xl font-black tracking-[0.2em] uppercase transition-all duration-300
-                      ${!coverImage 
-                        ? 'bg-gray-900 text-gray-700 border border-gray-800 cursor-not-allowed' 
-                        : 'bg-green-600 text-black hover:bg-green-500 shadow-[0_0_20px_rgba(0,255,0,0.4)] hover:shadow-[0_0_40px_rgba(0,255,0,0.6)] transform hover:scale-[1.01]'
-                      }
-                    `}
-                  >
-                    {isExporting ? (
-                        <div className="flex items-center justify-center gap-3">
-                            <span className="w-5 h-5 border-2 border-t-transparent border-black rounded-full animate-spin"></span>
-                            BURNING CARTRIDGE...
-                        </div>
-                    ) : (
-                        "BURN CARTRIDGE (DOWNLOAD)"
-                    )}
-                  </button>
-                  <p className="text-center text-[10px] text-gray-500 mt-3 uppercase tracking-wider">
-                      Compiles logic, metadata, and visuals into a standard PNG cartridge.
-                  </p>
-              </div>
-
-            </div> {/* End Right Column */}
-          </div> {/* End Grid */}
-
+            )}
+          </div>
         </div>
-      </CRTContainer>
+
+        {/* RIGHT COLUMN: CONTENT */}
+        <div className="lg:col-span-7 space-y-4">
+          
+          {/* 4. The Hook */}
+          <div className="bg-black/40 p-3 border border-green-900/50 rounded-sm">
+            <h2 className="text-green-500 mb-2 uppercase text-xs font-bold border-b border-green-900/30 pb-1">4. Opening Scene</h2>
+            <div className="space-y-2">
+                <div>
+                    <label className="text-[9px] text-green-800 uppercase block">Intro Narrative</label>
+                    <textarea value={introNarrative} onChange={e => setIntroNarrative(e.target.value)} className="w-full h-16 bg-[#050505] border border-green-900 text-green-400 px-2 py-1 text-sm resize-none focus:outline-none focus:border-green-500 placeholder-green-900" />
+                </div>
+                <div>
+                    <label className="text-[9px] text-green-800 uppercase block">Visual Description</label>
+                    <textarea value={visualPrompt} onChange={e => setVisualPrompt(e.target.value)} className="w-full h-16 bg-[#050505] border border-green-900 text-green-400 px-2 py-1 mb-1 text-sm resize-none focus:outline-none focus:border-green-500 placeholder-green-900" />
+                    <div className="flex flex-wrap gap-1">{VISUAL_TAGS.map(tag => <button key={tag} onClick={() => addVisualTag(tag)} className="text-[9px] border border-green-900/40 text-gray-500 px-2 py-0.5 bg-black hover:text-green-400 hover:border-green-400 transition-colors rounded-sm uppercase">+ {tag}</button>)}</div>
+                </div>
+            </div>
+          </div>
+
+          {/* 5. Choices */}
+          <div className="bg-black/40 p-3 border border-green-900/50 rounded-sm">
+            <div className="flex justify-between mb-2 border-b border-green-900/30 pb-1">
+              <h2 className="text-green-500 text-xs uppercase font-bold">5. Initial Choices</h2>
+              <button onClick={addChoice} className="text-[9px] bg-green-900 text-black px-2 py-0.5 font-bold hover:bg-green-500 uppercase rounded-sm">+ Add Option</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {choices.map((c, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <span className="text-green-800 text-xs font-bold">{i + 1}.</span>
+                  <input value={c.text} onChange={e => updateChoice(i, e.target.value)} className="bg-transparent border-b border-green-900 text-green-400 w-full text-sm focus:outline-none focus:border-green-500" />
+                  <button onClick={() => removeChoice(i)} className="text-red-900 hover:text-red-500 text-xs px-2 font-bold">X</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 6. Cover Art Studio */}
+          <div className="bg-black/40 p-3 border border-green-900/50 rounded-sm">
+            <h2 className="text-green-500 mb-2 uppercase text-xs font-bold border-b border-green-900/30 pb-1">6. Cover Art</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Controls */}
+                <div className="flex flex-col gap-2">
+                     <textarea 
+                        value={coverPrompt} 
+                        onChange={e => setCoverPrompt(e.target.value)} 
+                        placeholder="Describe cover art..."
+                        className="flex-grow h-20 bg-[#050505] border border-green-900 text-green-400 px-2 py-1 text-sm resize-none focus:outline-none focus:border-green-500 placeholder-green-900" 
+                    />
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                        {COVER_ART_TAGS.map(tag => (
+                            <button 
+                                key={tag} 
+                                onClick={() => addCoverTag(tag)}
+                                className="text-[9px] border border-green-900/30 text-gray-500 px-2 py-0.5 bg-black hover:text-green-400 hover:border-green-400 transition-colors uppercase"
+                            >
+                                + {tag}
+                            </button>
+                        ))}
+                    </div>
+                    <button 
+                        onClick={handleGenerateCover}
+                        disabled={isGeneratingCover}
+                        className={`
+                            w-full py-2 border text-xs uppercase tracking-widest transition-all font-bold
+                            ${isGeneratingCover ? 'bg-green-900/20 text-green-700 border-green-900' : 'bg-green-900/20 border-green-500/30 text-green-400 hover:bg-green-900/40 hover:border-green-400'}
+                        `}
+                    >
+                        {isGeneratingCover ? "Generating..." : "GENERATE AI COVER"}
+                    </button>
+                    {/* Status Log */}
+                    <div className="h-4 flex items-center">
+                        <span className={`text-[9px] font-mono ${genStatus.includes('ERROR') || genStatus.includes('FAILED') ? 'text-red-500' : 'text-green-600'}`}>
+                            {genStatus ? `> ${genStatus}` : ''}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Preview Box */}
+                <div className="w-full aspect-square bg-[#050505] border-2 border-dashed border-green-900/50 hover:border-green-500 flex items-center justify-center relative group overflow-hidden transition-colors rounded-sm">
+                    <div 
+                       onClick={() => fileInputRef.current?.click()}
+                       className="absolute inset-0 z-10 cursor-pointer"
+                       title="Click to Upload Cover Art"
+                    ></div>
+                    
+                    {coverImage ? (
+                        <>
+                            <img src={coverImage} className="w-full h-full object-cover" alt="Cover Preview" />
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity pointer-events-none">
+                                <span className="text-green-400 font-bold uppercase tracking-widest text-xs border border-green-400 px-3 py-1 bg-black">Replace Image</span>
+                            </div>
+                        </>
+                    ) : (
+                         <div className="text-center p-4 pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity">
+                             <div className="text-3xl mb-2 text-green-800">⬆️</div>
+                             <p className="text-green-600 font-bold text-[10px] uppercase tracking-widest">Click to Upload</p>
+                             <p className="text-[9px] text-green-800 mt-1 uppercase">or use Generator</p>
+                         </div>
+                    )}
+                    <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/png,image/jpeg" />
+                </div>
+            </div>
+          </div>
+
+        </div> 
+      </div>
+      
+      {/* 7. FINAL FOOTER SUBMIT */}
+      <div className="mt-6 border-t border-green-900/50 pt-4">
+          <button 
+            disabled={!coverImage || isExporting}
+            onClick={handleExport}
+            className={`
+              w-full py-4 text-xl font-black tracking-[0.3em] uppercase transition-all duration-300 rounded-sm
+              ${!coverImage 
+                ? 'bg-gray-900 text-gray-600 border border-gray-800 cursor-not-allowed' 
+                : 'bg-green-600 text-black hover:bg-green-500 shadow-[0_0_30px_rgba(0,255,0,0.3)] hover:shadow-[0_0_50px_rgba(0,255,0,0.5)] transform hover:-translate-y-1'
+              }
+            `}
+          >
+            {isExporting ? (
+                <span className="animate-pulse">BURNING CARTRIDGE...</span>
+            ) : !coverImage ? (
+                "AWAITING COVER ART"
+            ) : (
+                "BURN CARTRIDGE (DOWNLOAD)"
+            )}
+          </button>
+      </div>
+
     </div>
   );
 };
